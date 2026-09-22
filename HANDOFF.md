@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-21T17:30:00Z by audit session (no prior HANDOFF.md existed)
+Last updated: 2026-09-21 by daren-l5 fix session
 
 ---
 
@@ -9,14 +9,14 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline test suite | `py -3.11 -m pytest -q` | **5 failed, 102 passed** — all failures are live tests (TypeError: no API key, not skipped) |
-| Live tests only | `py -3.11 -m pytest -q -m live` | **5 failed, 1 passed, 101 deselected** — X1 passes (no LLM call needed); S1–D1 fail with TypeError |
+| Offline test suite | `py -3.11 -m pytest -q` | **106 passed, 6 skipped** — live tests skip (no API key) |
+| Offline only | `py -3.11 -m pytest -q -m "not live"` | **106 passed, 6 deselected** |
 | Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
 | API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
 | L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
 | Runner CLI | `py -3.11 -m doubletake.runner --blind tests/fixtures/sample_blind.jsonl` | **Valid JSONL** — 3 items, 3 trace entries each (L0-pre OK, L5 ERROR, L0-post OK) |
 | NotImplementedError stubs | read layers.py | 7 stubs: run_l1, run_l2, run_l3, run_l4, run_l6, run_l7, run_l8 |
-| Git state | `git status; git log --oneline -15` | On main, up-to-date with origin; **all source untracked** — only 2 commits (README uploads) |
+| Git state | `git log --oneline -8` | On daren-l5; 7 commits including all fixes from this session |
 | pytest-cov installed | install attempt | Was **NOT installed** — installed during this session |
 
 ### Per-module coverage (offline suite, branch mode)
@@ -52,7 +52,7 @@ All items below were confirmed by commands run in this session.
 | L2 | **stub** | none | `run_l2` raises NotImplementedError |
 | L3 | **stub** | none | `run_l3` raises NotImplementedError |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (offline: 18+6=24 tests; live: 6 tests) | Offline 89% cov; live tests FAIL (no skip) without API key |
+| L5 | **done** | yes (offline: 24+5=29 tests; live: 6 tests, skip without key) | Live tests skip when ANTHROPIC_API_KEY unset; missing-subscore retry wired |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -63,16 +63,14 @@ All items below were confirmed by commands run in this session.
 
 ### From Step 2 (a–h)
 
-**a. Model string** — CONFIRMED
-- `src/doubletake/l5_resolution.py:23` → `_MODEL = "claude-sonnet-4-6"`
-- Current identifiers: claude-opus-5, claude-sonnet-5, claude-haiku-4-5-20251001, claude-fable-5-1
-- `claude-sonnet-4-6` is not in that list
-- Severity: **should-fix** — calibration data should use the model that will be deployed
+**a. Model string** — SUPERSEDED, PENDING
+- Model choice is being re-decided; no code change made this session
+- Current state: `_MODEL = "claude-sonnet-4-6"` hard-coded in l5_resolution.py
+- When decision is made: add `L5_MODEL` to Settings; remove the module-level constant
 
-**b. Temperature comment** — CONFIRMED WRONG
-- `docs/L5_CALIBRATION.md:39` states: *"SDK version 1.7.0 removes `temperature` from `messages.create()`"*
-- Correct reason: Claude 4.7-and-later models reject non-default temperature/top_p/top_k with a **400 error**; the SDK parameter was not removed
-- Severity: **should-fix** — misleads future maintainers about why temperature is absent
+**b. Temperature comment** — RESOLVED (d74e036)
+- Replaced SDK-version attribution with correct explanation in docs/L5_CALIBRATION.md and scripts/run_l5_calibration.py
+- Correct reason: Claude 4.7-and-later models reject non-default temperature/top_p/top_k with a 400 error
 
 **c. test_enums.py** — CONFIRMED HARDCODED (tautological)
 - `tests/test_enums.py:37–90` — all 42 status strings are hardcoded in `_README_STATUS_STRINGS`
@@ -80,11 +78,11 @@ All items below were confirmed by commands run in this session.
 - README drift will not be caught
 - Severity: **nice-to-have** to fix (tests pass; no false negatives from enum side; only gap is README drift detection)
 
-**d. L5 retry / pydantic validation logging** — NOT FOUND
-- There is no pydantic validation of the LLM JSON response. Missing fields default silently to `0.0` via `float(parsed.get(k, 0.0))` in `l5_resolution.py:180–181`
-- The retry (attempt 2) triggers only on `json.JSONDecodeError, ValueError, IndexError`
-- If the LLM returns valid JSON with wrong/missing field names, no warning is emitted and the score is silently 0.0
-- Severity: **should-fix** — silent 0.0 fallback makes schema failures and genuine RESOLUTION_FAIL indistinguishable
+**d. L5 retry / pydantic validation logging** — RESOLVED (d26f7ae)
+- `_call_llm` now accepts `required_keys`; missing keys log a WARNING and raise ValueError (caught by existing retry loop)
+- `resolve_l5` determines weights before the LLM call and passes `required_keys=frozenset(weights)`
+- Subscores use `parsed[k]` not `parsed.get(k, 0.0)`; `resolution_score` is `Optional[float]=None` for INSUFFICIENT_CONTEXT
+- 5 parametrised regression tests in `tests/test_l5_missing_subscores.py`
 
 **e. Runner exception path test** — NOT FOUND
 - `runner.py:170–180` catches any layer exception and appends `LayerTrace(status="ERROR")`
@@ -109,31 +107,27 @@ All items below were confirmed by commands run in this session.
 
 ### Additional findings
 
-**i. Live tests don't skip when API key is absent** — CONFIRMED (BLOCKER for CI)
-- `tests/test_l5.py:395–413` — `@pytest.mark.live` is only a label; no `pytest.skipif` or conftest skip
-- Without API key: 5 tests FAIL with `TypeError: Could not resolve authentication method` instead of being skipped
-- `py -3.11 -m pytest -q` reports 5 failures in a clean environment with no key
-- Severity: **blocker** — breaks CI and misleads "are tests passing?" check
+**i. Live tests don't skip when API key is absent** — RESOLVED (393c6b5)
+- Added `tests/conftest.py` with `pytest_collection_modifyitems` that attaches a skip marker to every `@pytest.mark.live` item when `ANTHROPIC_API_KEY` is unset
+- `py -3.11 -m pytest -q` now reports **106 passed, 6 skipped** with no key
 
 **j. runner.py and layers.py have 0% coverage**
 - No integration test exercises the runner's `run()` function or the registered pipeline
 - Runner exception handling (`runner.py:170–180`) is completely untested
 - Severity: **should-fix**
 
-**k. No source code committed to git**
-- `git status` shows ALL source files as untracked
-- Only 2 commits exist: both are README-only uploads from before the codebase was written
-- Severity: **should-fix** — no version history, no ability to diff, revert, or bisect
+**k. No source code committed to git** — CORRECTED
+- Prior audit ran from the parent folder (`jokes\`), which is not a git repo — the result was misleading
+- Actual state: repo exists at `jokes\Joke_identification`; all source is committed on branch `daren-l5` and pushed to origin
+- 7 commits as of this session
 
 **l. pytest-cov not in test dependencies**
 - `pyproject.toml` `[project.optional-dependencies].test` only lists `pytest>=7`
 - `pytest-cov` must be installed manually; not documented anywhere
 - Severity: **nice-to-have**
 
-**m. Bare string comparison in _l0_post_layer**
-- `runner.py:99` — `record.l4_result.anchoring_status == "PASS"` instead of `AnchoringStatus.PASS`
-- Works because `AnchoringStatus` is `StrEnum`, but inconsistent with the rest of the codebase
-- Severity: **nice-to-have**
+**m. Bare string comparison in _l0_post_layer** — RESOLVED (fe433c7)
+- `runner.py:99` now uses `AnchoringStatus.PASS` instead of `"PASS"`
 
 ---
 
@@ -165,20 +159,15 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-Fix issue (i) first — live tests must skip, not fail, when `ANTHROPIC_API_KEY` is absent. This is the only thing that makes `py -3.11 -m pytest -q` report failures in a clean environment.
+Live L5 calibration run: set `ANTHROPIC_API_KEY` and run `py -3.11 scripts/run_l5_calibration.py` to fill in `docs/L5_CALIBRATION.md`.
 
-```
-# Add to tests/conftest.py (new file):
-import os, pytest
-def pytest_collection_modifyitems(config, items):
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        skip = pytest.mark.skip(reason="ANTHROPIC_API_KEY not set")
-        for item in items:
-            if item.get_closest_marker("live"):
-                item.add_marker(skip)
-```
+After that: resolve issue (a) — model string once the target model is confirmed.
 
-After that: set `ANTHROPIC_API_KEY` and run `py -3.11 scripts/run_l5_calibration.py` to fill in `docs/L5_CALIBRATION.md`.
+---
+
+## Team workflow
+
+This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; they note status in their PR description.
 
 ---
 
@@ -194,3 +183,12 @@ After that: set `ANTHROPIC_API_KEY` and run `py -3.11 scripts/run_l5_calibration
 - Found 13 open issues (a–m); issue (h) resolved; issue (i) is the only blocker
 - Source code not committed to git (all untracked)
 - No code changed this session (audit-only)
+
+### 2026-09-21 — Fix session (daren-l5)
+- Resolved d (d26f7ae): silent 0.0 subscore defaults removed; missing fields now retry then INSUFFICIENT_CONTEXT; 5 new regression tests
+- Resolved i (393c6b5): conftest.py added; live tests skip without API key; `py -3.11 -m pytest -q` now 106 passed, 6 skipped
+- Resolved b (d74e036): temperature explanation corrected in docs/L5_CALIBRATION.md and scripts/run_l5_calibration.py
+- Resolved m (fe433c7): bare "PASS" string replaced with AnchoringStatus.PASS in runner.py
+- Skipped a: model choice pending re-decision; marked "superseded, pending"
+- Corrected item k: prior audit was run from wrong directory (parent jokes\); repo and commits exist on daren-l5
+- Suite state: 106 passed, 6 skipped (no API key)

@@ -9,3 +9,12 @@
 - In HANDOFF.md, never mark something VERIFIED unless you ran a command
   in the current session that confirms it.
 - Never delete session-log entries.
+
+## Project state and workflow
+
+- Project state lives in HANDOFF.md only. Do not store project status in
+  any other memory system.
+- Always launch pytest and scripts from the repo root
+  (C:\Users\ASUS\Documents\jokes\Joke_identification).
+- Only the owner (Daren) edits HANDOFF.md. Other contributors note status
+  in their PR description.
