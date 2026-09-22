@@ -270,7 +270,7 @@ class TestResolveL5Offline:
         failing_client.messages.create.side_effect = AssertionError("LLM must not be called")
         result = resolve_l5(record, DEFAULT_SETTINGS, client=failing_client)
         assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT
-        assert result.resolution_score == 0.0
+        assert result.resolution_score is None
         failing_client.messages.create.assert_not_called()
 
     def test_insufficient_context_after_two_json_failures(self) -> None:
@@ -409,6 +409,7 @@ def test_fixture_item_live(fixture: dict[str, Any]) -> None:
         record, DEFAULT_SETTINGS, ambiguous_term=fixture["ambiguous_term"]
     )
     assert result.resolution_status in ResolutionStatus
-    assert isinstance(result.resolution_score, float)
-    assert 0.0 <= result.resolution_score <= 1.0
+    if result.resolution_score is not None:
+        assert isinstance(result.resolution_score, float)
+        assert 0.0 <= result.resolution_score <= 1.0
     assert isinstance(result.subscores, dict)

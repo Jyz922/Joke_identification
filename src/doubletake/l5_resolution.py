@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 import anthropic
+
+_LOG = logging.getLogger(__name__)
 
 from .config import Settings
 from .enums import AnchoringStatus, Genre, ResolutionStatus
@@ -59,8 +62,10 @@ def _extract_json(text: str) -> dict[str, Any]:
 def _call_llm(
     prompt_text: str,
     client: anthropic.Anthropic | None = None,
+    *,
+    required_keys: frozenset[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Call the LLM; on JSON parse failure retry once; return None on second failure."""
+    """Call the LLM; on JSON parse or missing-field failure retry once; return None on second failure."""
     if client is None:
         client = anthropic.Anthropic()
 
@@ -69,7 +74,8 @@ def _call_llm(
             ""
             if attempt == 0
             else (
-                "\n\nIMPORTANT: Your previous response could not be parsed as JSON."
+                "\n\nIMPORTANT: Your previous response could not be parsed as JSON"
+                " or was missing required fields."
                 " Return ONLY a valid JSON object with no surrounding text."
             )
         )
@@ -80,7 +86,17 @@ def _call_llm(
         )
         raw: str = response.content[0].text
         try:
-            return _extract_json(raw)
+            parsed = _extract_json(raw)
+            if required_keys:
+                missing = required_keys - parsed.keys()
+                if missing:
+                    for field in sorted(missing):
+                        _LOG.warning(
+                            "L5 response missing required field %r (attempt %d)",
+                            field, attempt,
+                        )
+                    raise ValueError(f"Missing required fields: {sorted(missing)}")
+            return parsed
         except (json.JSONDecodeError, ValueError, IndexError):
             if attempt == 1:
                 return None
@@ -106,20 +122,17 @@ def _make_insufficient(genre: Genre) -> L5Result:
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
             resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
-            resolution_score=0.0,
             subscores=empty,
         )
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
             resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
-            resolution_score=0.0,
             subscores=empty,
         )
     return L5DialogueResult(
         genre=genre,
         resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
-        resolution_score=0.0,
         subscores=empty,
     )
 
@@ -171,36 +184,34 @@ def resolve_l5(
     }
     prompt = _PLACEHOLDER.sub(lambda m: variables.get(m.group(1), m.group(0)), template)
 
-    parsed = _call_llm(prompt, client=client)
+    if genre == Genre.QA_RIDDLE:
+        weights: dict[str, float] = settings.L5_QA_WEIGHTS
+    elif genre == Genre.DEFINITIONAL_ONELINER:
+        weights = _L5_DEFINITIONAL_WEIGHTS
+    else:
+        weights = _L5_DIALOGUE_WEIGHTS
+
+    parsed = _call_llm(prompt, client=client, required_keys=frozenset(weights))
     if parsed is None:
         return _make_insufficient(genre)
 
+    subscores = {k: float(parsed[k]) for k in weights}
+    score = _weighted_score(subscores, weights)
+
     if genre == Genre.QA_RIDDLE:
-        weights = settings.L5_QA_WEIGHTS
-        subscores = {k: float(parsed.get(k, 0.0)) for k in weights}
-        score = _weighted_score(subscores, weights)
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
             resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
             resolution_score=round(score, 4),
             subscores=subscores,
         )
-
     if genre == Genre.DEFINITIONAL_ONELINER:
-        weights = _L5_DEFINITIONAL_WEIGHTS
-        subscores = {k: float(parsed.get(k, 0.0)) for k in weights}
-        score = _weighted_score(subscores, weights)
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
             resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
             resolution_score=round(score, 4),
             subscores=subscores,
         )
-
-    # DIALOGUE_MISUNDERSTANDING or DECLARATIVE
-    weights = _L5_DIALOGUE_WEIGHTS
-    subscores = {k: float(parsed.get(k, 0.0)) for k in weights}
-    score = _weighted_score(subscores, weights)
     return L5DialogueResult(
         genre=genre,
         resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),

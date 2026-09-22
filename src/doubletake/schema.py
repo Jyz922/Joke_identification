@@ -99,13 +99,14 @@ class L5QAResult(BaseModel):
 
     Subscores map the five keys from L5_QA_WEIGHTS: polarity_or_direction,
     answer_relevance, causal, agent, tense_aspect.
+    resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     genre: Literal[Genre.QA_RIDDLE]
     resolution_status: ResolutionStatus
-    resolution_score: float
+    resolution_score: Optional[float] = None
     subscores: dict[str, float]
 
 
@@ -115,13 +116,14 @@ class L5DefinitionalResult(BaseModel):
     Subscores: setup_invites_literal, punchline_exploits_split, contrast_strength.
     Note: same-span anchors are permitted when anchor_relation == RESEGMENTATION.
     See ARCHITECTURE.md § L5 Decision 2.
+    resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     genre: Literal[Genre.DEFINITIONAL_ONELINER]
     resolution_status: ResolutionStatus
-    resolution_score: float
+    resolution_score: Optional[float] = None
     subscores: dict[str, float]
 
 
@@ -129,13 +131,14 @@ class L5DialogueResult(BaseModel):
     """Resolution result for DIALOGUE_MISUNDERSTANDING and DECLARATIVE jokes.
 
     Subscores: misunderstanding_plausible, contrast_clear, speaker_intention_clear.
+    resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     genre: Literal[Genre.DIALOGUE_MISUNDERSTANDING, Genre.DECLARATIVE]
     resolution_status: ResolutionStatus
-    resolution_score: float
+    resolution_score: Optional[float] = None
     subscores: dict[str, float]
 
 
