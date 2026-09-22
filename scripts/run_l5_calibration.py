@@ -174,8 +174,9 @@ def _write_calibration_doc(
                  "RESOLUTION_FAIL is expected if contrast_strength is scored low.")
     lines.append("- X1 (`bank`) has anchoring_status=ONE_SENSE_ONLY; L5 short-circuits "
                  "before calling the LLM and always returns INSUFFICIENT_CONTEXT.")
-    lines.append("- Score variance across runs reflects model non-determinism (no "
-                 "temperature=0 equivalent in SDK 1.7.0; effort=default/high).")
+    lines.append("- Score variance across runs reflects model non-determinism. "
+                 "Claude 4.7-and-later models reject non-default temperature/top_p/top_k "
+                 "with a 400 error, so run-to-run variance is measured rather than suppressed.")
     lines.append("")
 
     _OUTPUT_PATH.write_text("\n".join(lines), encoding="utf-8")

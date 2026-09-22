@@ -16,7 +16,7 @@
 Once generated, this document reports:
 
 - Per-item: expected status, observed status across 5 runs, score range (min/mean/max), stability flag
-- Score variance across runs (a proxy for model non-determinism, since `temperature=0` is not available in SDK 1.7.0)
+- Score variance across runs (a proxy for model non-determinism; Claude 4.7-and-later models reject non-default temperature/top_p/top_k with a 400 error, so run-to-run variance is measured rather than suppressed)
 - Whether each fixture's `expected_l5_status` was confirmed, rejected, or unstable
 
 ## Fixture summary
@@ -36,4 +36,4 @@ E1 (`autobiography`) is the critical test for ARCHITECTURE.md Decision 2.  Both 
 
 ## Note on non-determinism
 
-SDK version 1.7.0 removes `temperature` from `messages.create()`.  The default effort level (`high`) is used, which means outputs may vary slightly between runs.  Five runs are recorded to measure this variance.  A stable item shows the same `resolution_status` in all 5 runs; an unstable item warrants prompt review.
+Claude 4.7-and-later models reject non-default temperature/top_p/top_k with a 400 error, so run-to-run variance is measured rather than suppressed.  Five runs are recorded to measure this variance.  A stable item shows the same `resolution_status` in all 5 runs; an unstable item warrants prompt review.
