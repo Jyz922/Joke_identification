@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-21 by daren-l5 fix session
+Last updated: 2026-09-21 by daren-l5 gemini-backend session
 
 ---
 
@@ -9,8 +9,8 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline test suite | `py -3.11 -m pytest -q` | **106 passed, 6 skipped** — live tests skip (no API key) |
-| Offline only | `py -3.11 -m pytest -q -m "not live"` | **106 passed, 6 deselected** |
+| Offline test suite | `py -3.11 -m pytest -q` | **110 passed, 10 skipped** — live tests skip (no GEMINI_API_KEY) |
+| Offline only | `py -3.11 -m pytest -q -m "not live"` | **110 passed, 10 deselected** |
 | Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
 | API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
 | L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
@@ -52,7 +52,7 @@ All items below were confirmed by commands run in this session.
 | L2 | **stub** | none | `run_l2` raises NotImplementedError |
 | L3 | **stub** | none | `run_l3` raises NotImplementedError |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (offline: 24+5=29 tests; live: 6 tests, skip without key) | Live tests skip when ANTHROPIC_API_KEY unset; missing-subscore retry wired |
+| L5 | **done** | yes (offline: 110 passed; live: 10 tests, skip without key) | Gemini backend (default); Anthropic backend switchable via L5_BACKEND; live tests skip when GEMINI_API_KEY unset |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -63,10 +63,11 @@ All items below were confirmed by commands run in this session.
 
 ### From Step 2 (a–h)
 
-**a. Model string** — SUPERSEDED, PENDING
-- Model choice is being re-decided; no code change made this session
-- Current state: `_MODEL = "claude-sonnet-4-6"` hard-coded in l5_resolution.py
-- When decision is made: add `L5_MODEL` to Settings; remove the module-level constant
+**a. Model string** — PARTIALLY RESOLVED (Gemini backend session)
+- `L5_BACKEND = "gemini"` and `L5_MODEL_GEMINI = "gemini-3.6-flash"` added to Settings in config.py
+- `_MODEL = "claude-sonnet-4-6"` is the Anthropic fallback (used when `L5_BACKEND = "anthropic"`); this model string is **unverified** — no live Anthropic call has been made this session, so API availability, billing, and correct output format are untested
+- Not blocking: `L5_BACKEND = "gemini"` is the default and the only path with a live run pending
+- Decision rationale in ARCHITECTURE.md §7
 
 **b. Temperature comment** — RESOLVED (d74e036)
 - Replaced SDK-version attribution with correct explanation in docs/L5_CALIBRATION.md and scripts/run_l5_calibration.py
@@ -107,9 +108,9 @@ All items below were confirmed by commands run in this session.
 
 ### Additional findings
 
-**i. Live tests don't skip when API key is absent** — RESOLVED (393c6b5)
-- Added `tests/conftest.py` with `pytest_collection_modifyitems` that attaches a skip marker to every `@pytest.mark.live` item when `ANTHROPIC_API_KEY` is unset
-- `py -3.11 -m pytest -q` now reports **106 passed, 6 skipped** with no key
+**i. Live tests don't skip when API key is absent** — RESOLVED, UPDATED
+- `tests/conftest.py` updated to check the active backend's key: `GEMINI_API_KEY` when `L5_BACKEND == "gemini"`, else `ANTHROPIC_API_KEY`
+- `py -3.11 -m pytest -q` now reports **110 passed, 10 skipped** with no GEMINI_API_KEY
 
 **j. runner.py and layers.py have 0% coverage**
 - No integration test exercises the runner's `run()` function or the registered pipeline
@@ -159,9 +160,9 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-Live L5 calibration run: set `ANTHROPIC_API_KEY` and run `py -3.11 scripts/run_l5_calibration.py` to fill in `docs/L5_CALIBRATION.md`.
+Live L5 calibration run: set `GEMINI_API_KEY` and run `py -3.11 scripts/run_l5_calibration.py` to fill in `docs/L5_CALIBRATION.md`.
 
-After that: resolve issue (a) — model string once the target model is confirmed.
+After that: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
 
 ---
 
@@ -192,3 +193,19 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
 - Skipped a: model choice pending re-decision; marked "superseded, pending"
 - Corrected item k: prior audit was run from wrong directory (parent jokes\); repo and commits exist on daren-l5
 - Suite state: 106 passed, 6 skipped (no API key)
+
+### 2026-09-21 — Gemini backend session (daren-l5)
+- Task 1 (a771b0e): fixtures restored — tests/fixtures/l5_anchors.jsonl replaced with 10 spec items (S1/S2 skeleton minimal pair, E1/X1 elephant/trunk minimal pair, A1 autobiography, D1 shingles, P1 cows/horns, P2 explain-fail, P3 curtains, N1 bank/INSUFFICIENT_CONTEXT); suite 110 passed, 10 skipped
+- Task 2 ("l5: add gemini backend"): Gemini backend wired end-to-end
+  - config.py: L5_BACKEND="gemini", L5_MODEL_GEMINI="gemini-3.6-flash"
+  - pyproject.toml: google-genai>=2.0 added; google-genai 2.24.0 installed
+  - l5_resolution.py: pydantic response models (_QALLMResponse, _DefinitionalLLMResponse, _DialogueLLMResponse); _is_spend_cap_error, _extract_retry_delay, _gemini_generate (429+retryDelay handling), _call_gemini (schema-constrained, temperature=0), _complete_json dispatcher; resolve_l5 signature unchanged (client: Any = None)
+  - tests/conftest.py: skip logic checks GEMINI_API_KEY vs ANTHROPIC_API_KEY based on active backend
+  - tests/test_l5.py: _mock_client mocks both client.messages.create and client.models.generate_content; test_insufficient_context_when_anchoring_not_pass asserts both not_called
+  - tests/test_l5_missing_subscores.py: _client_always_omitting mocks both interfaces; call_count assertion is backend-aware
+  - scripts/run_l5_calibration.py: backend+model in report header, time.sleep(0.5) between calls, None score handling throughout, notes updated for new fixture IDs
+  - ARCHITECTURE.md §7: Decision 3 — Gemini backend rationale (schema constraints, temperature=0, cost, data-use warning, S1/S2 smoke test)
+  - Partially resolved issue a: L5_BACKEND + L5_MODEL_GEMINI in Settings; Anthropic model string (claude-sonnet-4-6) unverified — not blocking while L5_BACKEND="gemini"
+  - L5_BACKEND typed as Literal["gemini", "anthropic"]; dispatcher raises ValueError on unknown backend; one test confirms invalid value rejected at config load
+- Suite state: 110 passed, 10 deselected (live tests skip without GEMINI_API_KEY)
+- Live calibration NOT run — requires GEMINI_API_KEY
