@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-21 by daren-l5 gemini-backend session
+Last updated: 2026-09-22 by daren-l5 resilience + calibration session
 
 ---
 
@@ -9,8 +9,8 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline test suite | `py -3.11 -m pytest -q` | **110 passed, 10 skipped** — live tests skip (no GEMINI_API_KEY) |
-| Offline only | `py -3.11 -m pytest -q -m "not live"` | **110 passed, 10 deselected** |
+| Offline test suite | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 10 deselected** |
+| Offline only | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 10 deselected** |
 | Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
 | API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
 | L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
@@ -52,7 +52,7 @@ All items below were confirmed by commands run in this session.
 | L2 | **stub** | none | `run_l2` raises NotImplementedError |
 | L3 | **stub** | none | `run_l3` raises NotImplementedError |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (offline: 110 passed; live: 10 tests, skip without key) | Gemini backend (default); Anthropic backend switchable via L5_BACKEND; live tests skip when GEMINI_API_KEY unset |
+| L5 | **done** | yes (offline: 119 passed; live: 10 tests, skip without key) | Gemini backend (default); 5xx retry + model fallback chain added (Task 1); resumable calibration script added (Task 2); live calibration NOT RUN — free-tier RPD quota exhausted |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -160,9 +160,15 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-Live L5 calibration run: set `GEMINI_API_KEY` and run `py -3.11 scripts/run_l5_calibration.py` to fill in `docs/L5_CALIBRATION.md`.
+**Task 3 NOT DONE — calibration blocked on free-tier RPD quota.**
 
-After that: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
+The Gemini free-tier daily quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20 req/day for `gemini-3.6-flash`) was exhausted by live pytest runs in the previous session. The calibration run made ~19 API calls, all of which returned 429 (no data written, except N1 run=0 which returned INSUFFICIENT_CONTEXT with no LLM call because L4 anchoring failed — no quota consumed).
+
+Steps when quota resets (midnight Pacific):
+1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available
+2. `py -3.11 scripts/run_l5_calibration.py --resume` — picks up where it left off (1 row already in JSONL for N1 run=0)
+
+After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
 
 ---
 
@@ -209,3 +215,35 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
   - L5_BACKEND typed as Literal["gemini", "anthropic"]; dispatcher raises ValueError on unknown backend; one test confirms invalid value rejected at config load
 - Suite state: 110 passed, 10 deselected (live tests skip without GEMINI_API_KEY)
 - Live calibration NOT run — requires GEMINI_API_KEY
+
+### 2026-09-22 — Resilience + calibration session (daren-l5)
+
+**Task 1 DONE ("l5: retry 5xx and model fallback chain"):**
+- `config.py`: added `L5_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]`
+- `schema.py`: added `model_used: str = ""`, `fallback_used: bool = False`, `retries: int = 0` to all three L5 result types (L5QAResult, L5DefinitionalResult, L5DialogueResult)
+- `l5_resolution.py`:
+  - Imports `ServerError as _GeminiServerError` (critical: SDK raises ServerError for 5xx, ClientError for 4xx — separate classes)
+  - `_call_gemini_single`: up to 5 attempts per model, exponential backoff 2/4/8/16s between attempts, catches `_GeminiServerError` only
+  - `_call_gemini_with_chain`: tries primary then each fallback in chain after 5xx exhaustion; parse failure does not trigger fallback
+  - `_complete_json` and `resolve_l5` updated to propagate `model_used`, `fallback_used`, `retries`
+  - `_gemini_generate` updated: `if delay:` (positive only) for retry; 0s retryDelay now raises RuntimeError immediately (daily-quota RPD case)
+  - `_make_insufficient` updated to accept and forward tracking fields
+- `tests/test_l5.py`: 9 new offline tests (5xx 2-call retry, 5-503 fallback, all-exhausted raises, RPD fails fast); `time.sleep` patched in all 5xx/quota tests; `time.sleep(L5_CALL_PAUSE_SECONDS)` added after each live call
+
+**Task 1 bug found and fixed (same commit):**
+- Original code caught `_GeminiClientError` for 5xx retries — wrong; SDK raises `ServerError` (sibling of `ClientError`, not a subclass)
+- Discovered from live test: `google.genai.errors.ServerError: 503 UNAVAILABLE` propagated without triggering retry
+- Fix: added `ServerError` import, changed `except _GeminiClientError` to `except _GeminiServerError` in `_call_gemini_single`
+- RPD issue also fixed: 429 with `retryDelay=0s` now raises RuntimeError immediately instead of retrying
+
+**Task 2 DONE ("calibration: resumable runner"):**
+- `scripts/run_l5_calibration.py`: full rewrite — JSONL append-per-row, skip-completed, `--resume`/`--fresh`/`--probe` flags, per-row `wall_clock_ms`, `raw_response_path`
+- `docs/L5_CALIBRATION.md`: regenerated as NO-DATA placeholder with prominent status header
+- Fixed two Unicode encoding bugs (Windows cp1252): `✓`/`✗` → `OK`/`!!`, em-dash in probe print removed
+
+**Task 3 NOT DONE — calibration blocked:**
+- Gemini free-tier RPD quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20/day for `gemini-3.6-flash`) exhausted by live pytest runs
+- Calibration attempt made ~19 API calls — all 429; 0 useful rows written (N1 row in JSONL is INSUFFICIENT_CONTEXT with no LLM call)
+- Q2, Q4, Q5, Q6, Q7 from calibration spec cannot be answered — no score data
+- Resume: `py -3.11 scripts/run_l5_calibration.py --probe` then `--resume` after midnight Pacific quota reset
+- Suite state: 119 passed, 10 deselected
