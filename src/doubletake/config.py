@@ -53,9 +53,10 @@ class Settings(BaseModel):
 
     # --- L5 backend ------------------------------------------------------
     L5_BACKEND: Literal["gemini", "anthropic"] = "gemini"
-    # gemini-2.5-flash is unavailable to new accounts; model availability
-    # depends on account age.  Pin exact IDs; never use -latest aliases.
+    # Pin exact IDs — never use -latest aliases; availability varies by account age.
     L5_MODEL_GEMINI: str = "gemini-3.6-flash"
+    # Ordered fallback chain tried after the primary exhausts its 5xx retries.
+    L5_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
 
     # --- L5 QA resolution ------------------------------------------------
     # Weights must sum to 1.0 (asserted below).

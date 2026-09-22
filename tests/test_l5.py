@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from google.genai.errors import ClientError as GeminiClientError
+from google.genai.errors import ServerError as GeminiServerError
 from pydantic import ValidationError
 
 from doubletake.config import DEFAULT_SETTINGS, Settings
@@ -456,6 +458,18 @@ def _make_spend_cap_error() -> GeminiClientError:
     return GeminiClientError(429, {"error": {"message": "limit: 0 spend cap exceeded"}})
 
 
+def _make_rpd_error() -> GeminiClientError:
+    """Daily-quota exhausted: retryDelay='0s' (non-retryable)."""
+    return GeminiClientError(429, {"error": {
+        "message": "Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20",
+        "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0s"}],
+    }})
+
+
+def _make_server_error(code: int = 503) -> GeminiServerError:
+    return GeminiServerError(code, {"error": {"message": "upstream unavailable"}})
+
+
 def test_gemini_generate_waits_and_retries_on_retry_delay() -> None:
     client = MagicMock()
     ok = MagicMock()
@@ -482,6 +496,77 @@ def test_gemini_generate_fails_immediately_on_spend_cap() -> None:
     assert client.models.generate_content.call_count == 1
 
 
+def test_gemini_generate_fails_immediately_on_rpd_exhausted() -> None:
+    """Daily-quota 429 (retryDelay=0s) fails fast: 1 call, no sleep, RuntimeError."""
+    client = MagicMock()
+    client.models.generate_content.side_effect = [_make_rpd_error()]
+
+    with patch("doubletake.l5_resolution.time.sleep") as mock_sleep:
+        with pytest.raises(RuntimeError, match="non-retryable"):
+            _gemini_generate(client, "gemini-3.6-flash", "prompt", MagicMock())
+
+    mock_sleep.assert_not_called()
+    assert client.models.generate_content.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# 5xx retry and model-fallback chain tests
+# ---------------------------------------------------------------------------
+
+def test_5xx_then_success_two_calls_one_sleep() -> None:
+    """503 on first call → sleep 2s → success on second call."""
+    settings = Settings(L5_BACKEND="gemini")
+    client = MagicMock()
+    good = MagicMock()
+    good.text = json.dumps({k: 0.9 for k in settings.L5_QA_WEIGHTS})
+    client.models.generate_content.side_effect = [_make_server_error(503), good]
+
+    with patch("doubletake.l5_resolution.time.sleep") as mock_sleep:
+        result = resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+
+    assert result.resolution_status == ResolutionStatus.RESOLUTION_PASS
+    assert client.models.generate_content.call_count == 2
+    mock_sleep.assert_called_once_with(2)
+
+
+def test_five_503s_on_primary_triggers_fallback() -> None:
+    """Five consecutive 503s exhaust primary; code falls back to next model in chain."""
+    settings = Settings(
+        L5_BACKEND="gemini",
+        L5_MODEL_GEMINI="gemini-3.6-flash",
+        L5_MODEL_GEMINI_CHAIN=["gemini-3.8-flash"],
+    )
+    client = MagicMock()
+    good = MagicMock()
+    good.text = json.dumps({k: 0.9 for k in settings.L5_QA_WEIGHTS})
+    client.models.generate_content.side_effect = [_make_server_error(503)] * 5 + [good]
+
+    with patch("doubletake.l5_resolution.time.sleep") as mock_sleep:
+        result = resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+
+    assert result.resolution_status == ResolutionStatus.RESOLUTION_PASS
+    assert result.fallback_used is True
+    assert result.model_used == "gemini-3.8-flash"
+    assert client.models.generate_content.call_count == 6  # 5 primary + 1 fallback
+    assert mock_sleep.call_count == 4  # 4 sleeps between 5 primary attempts
+
+
+def test_all_models_exhausted_raises_with_status() -> None:
+    """All models in chain exhaust 5xx retries → RuntimeError with HTTP status."""
+    settings = Settings(
+        L5_BACKEND="gemini",
+        L5_MODEL_GEMINI="gemini-3.6-flash",
+        L5_MODEL_GEMINI_CHAIN=["gemini-3.8-flash"],
+    )
+    client = MagicMock()
+    # 5 primary + 5 fallback = 10 consecutive 503s
+    client.models.generate_content.side_effect = [_make_server_error(503)] * 10
+
+    with patch("doubletake.l5_resolution.time.sleep"):
+        with pytest.raises(RuntimeError, match="503"):
+            resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+
+
 # ---------------------------------------------------------------------------
 # Live tests — real API calls, excluded from offline runs
 # ---------------------------------------------------------------------------
@@ -502,6 +587,7 @@ def test_fixture_item_live(fixture: dict[str, Any]) -> None:
     result = resolve_l5(
         record, DEFAULT_SETTINGS, ambiguous_term=fixture["ambiguous_term"]
     )
+    time.sleep(DEFAULT_SETTINGS.L5_CALL_PAUSE_SECONDS)
     assert result.resolution_status in ResolutionStatus
     if result.resolution_score is not None:
         assert isinstance(result.resolution_score, float)

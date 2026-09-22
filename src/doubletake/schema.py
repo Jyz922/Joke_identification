@@ -108,6 +108,9 @@ class L5QAResult(BaseModel):
     resolution_status: ResolutionStatus
     resolution_score: Optional[float] = None
     subscores: dict[str, float]
+    model_used: str = ""
+    fallback_used: bool = False
+    retries: int = 0
 
 
 class L5DefinitionalResult(BaseModel):
@@ -125,6 +128,9 @@ class L5DefinitionalResult(BaseModel):
     resolution_status: ResolutionStatus
     resolution_score: Optional[float] = None
     subscores: dict[str, float]
+    model_used: str = ""
+    fallback_used: bool = False
+    retries: int = 0
 
 
 class L5DialogueResult(BaseModel):
@@ -140,6 +146,9 @@ class L5DialogueResult(BaseModel):
     resolution_status: ResolutionStatus
     resolution_score: Optional[float] = None
     subscores: dict[str, float]
+    model_used: str = ""
+    fallback_used: bool = False
+    retries: int = 0
 
 
 L5Result = Annotated[

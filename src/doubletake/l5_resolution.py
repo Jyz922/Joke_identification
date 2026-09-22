@@ -14,6 +14,7 @@ import anthropic
 import google.genai as _genai
 import google.genai.types as _genai_types
 from google.genai.errors import ClientError as _GeminiClientError
+from google.genai.errors import ServerError as _GeminiServerError
 from pydantic import BaseModel, ConfigDict
 
 from .config import Settings
@@ -132,24 +133,33 @@ def _resolution_status(score: float, threshold: float) -> ResolutionStatus:
     )
 
 
-def _make_insufficient(genre: Genre) -> L5Result:
+def _make_insufficient(
+    genre: Genre,
+    model_used: str = "",
+    fallback_used: bool = False,
+    retries: int = 0,
+) -> L5Result:
     empty: dict[str, float] = {}
+    kw = dict(model_used=model_used, fallback_used=fallback_used, retries=retries)
     if genre == Genre.QA_RIDDLE:
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
             resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
             subscores=empty,
+            **kw,
         )
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
             resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
             subscores=empty,
+            **kw,
         )
     return L5DialogueResult(
         genre=genre,
         resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
         subscores=empty,
+        **kw,
     )
 
 
@@ -219,7 +229,11 @@ def _gemini_generate(
     contents: str,
     config: _genai_types.GenerateContentConfig,
 ) -> _genai_types.GenerateContentResponse:
-    """One Gemini call; on 429+retryDelay waits and retries once."""
+    """One Gemini call; on 429 with a positive retryDelay waits and retries once.
+
+    429 with retryDelay=0s or no retryDelay is non-retryable (daily quota / spend-cap)
+    and raises RuntimeError immediately without sleeping.
+    """
     for _try in range(2):
         try:
             return client.models.generate_content(
@@ -232,48 +246,131 @@ def _gemini_generate(
                         f"Gemini spend cap or zero-quota (non-transient): {err.message}"
                     ) from err
                 delay = _extract_retry_delay(err)
-                if delay is not None:
+                if delay:  # positive seconds only — genuinely transient rate limit
                     time.sleep(delay)
                     continue
+                raise RuntimeError(
+                    f"Gemini quota exhausted (non-retryable, retryDelay=0): {err.message}"
+                ) from err
             raise
     raise RuntimeError("unreachable")  # satisfies type checker
 
 
-def _call_gemini(
+# Exponential backoff delays between 5xx retry attempts (seconds).
+# _5XX_MAX = 5 total attempts per model → at most 4 sleeps using delays[0..3].
+_5XX_DELAYS: tuple[int, ...] = (2, 4, 8, 16, 32)
+_5XX_MAX: int = 5
+
+
+def _call_gemini_single(
     prompt_text: str,
     response_model: type,
     required_keys: frozenset[str] | None,
     model: str,
-    client: _genai.Client | None = None,
-) -> dict[str, Any] | None:
-    """Gemini path: schema-constrained JSON, temperature=0, retry once on failure."""
-    if client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not set")
-        client = _genai.Client(api_key=api_key)
+    client: _genai.Client,
+) -> tuple[dict[str, Any] | None, int, "_GeminiClientError | None"]:
+    """One model: up to _5XX_MAX attempts with exponential backoff on 5xx.
 
+    Returns (parsed, retries, last_5xx_err):
+    - Success:           (dict, retries, None)
+    - Parse failure:     (None, retries, None)
+    - 5xx exhausted:     (None, retries, GeminiClientError)
+    """
     config = _genai_types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=response_model,
         temperature=0.0,
         max_output_tokens=512,
     )
+    retries = 0
+    last_5xx: _GeminiClientError | None = None
 
-    for attempt in range(2):
-        suffix = "" if attempt == 0 else _RETRY_SUFFIX
-        response = _gemini_generate(client, model, prompt_text + suffix, config)
-        raw: str = response.text
+    for _5xx_attempt in range(_5XX_MAX):
+        if _5xx_attempt > 0:
+            delay = _5XX_DELAYS[_5xx_attempt - 1]
+            _LOG.warning(
+                "L5 5xx retry: model=%s attempt=%d/%d code=%d sleeping=%ds",
+                model, _5xx_attempt + 1, _5XX_MAX,
+                last_5xx.code if last_5xx else 0, delay,
+            )
+            time.sleep(delay)
+            retries += 1
+
         try:
-            parsed = _extract_json(raw)
-            if required_keys:
-                _validate_keys(parsed, required_keys, attempt, "gemini")
-            return parsed
-        except (json.JSONDecodeError, ValueError, IndexError):
-            if attempt == 1:
-                return None
+            for parse_attempt in range(2):
+                suffix = "" if parse_attempt == 0 else _RETRY_SUFFIX
+                response = _gemini_generate(client, model, prompt_text + suffix, config)
+                raw: str = response.text
+                try:
+                    parsed = _extract_json(raw)
+                    if required_keys:
+                        _validate_keys(parsed, required_keys, parse_attempt, "gemini")
+                    return parsed, retries, None
+                except (json.JSONDecodeError, ValueError, IndexError):
+                    if parse_attempt == 1:
+                        return None, retries, None
 
-    return None  # unreachable
+        except _GeminiServerError as e:
+            if e.code in (500, 502, 503, 504):
+                last_5xx = e
+                _LOG.warning(
+                    "L5 5xx: model=%s attempt=%d/%d code=%d",
+                    model, _5xx_attempt + 1, _5XX_MAX, e.code,
+                )
+            else:
+                raise
+
+    return None, retries, last_5xx
+
+
+def _call_gemini_with_chain(
+    prompt_text: str,
+    response_model: type,
+    required_keys: frozenset[str] | None,
+    settings: Settings,
+    client: _genai.Client | None,
+) -> tuple[dict[str, Any] | None, str, bool, int]:
+    """Try primary model then each fallback in chain on 5xx exhaustion.
+
+    Returns (parsed, model_used, fallback_used, total_retries).
+    Raises RuntimeError if all models exhaust their 5xx retries.
+    Parse failure on any model returns (None, model, fallback_used, retries)
+    without trying the fallback chain.
+    """
+    if client is None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not set")
+        client = _genai.Client(api_key=api_key)
+
+    models = [settings.L5_MODEL_GEMINI, *settings.L5_MODEL_GEMINI_CHAIN]
+    total_retries = 0
+
+    for model_idx, model in enumerate(models):
+        parsed, retries, err_5xx = _call_gemini_single(
+            prompt_text, response_model, required_keys, model, client
+        )
+        total_retries += retries
+
+        if parsed is not None:
+            return parsed, model, model_idx > 0, total_retries
+
+        if err_5xx is None:
+            # parse failure — don't try fallback, caller returns INSUFFICIENT_CONTEXT
+            return None, model, model_idx > 0, total_retries
+
+        # 5xx exhausted; try next model if available
+        if model_idx < len(models) - 1:
+            _LOG.warning(
+                "L5 fallback switch: %s → %s (HTTP %d)",
+                model, models[model_idx + 1], err_5xx.code,
+            )
+        else:
+            raise RuntimeError(
+                f"L5 Gemini: all models exhausted after retries, last HTTP {err_5xx.code}"
+            ) from err_5xx
+
+    raise RuntimeError("unreachable")
 
 
 # ---------------------------------------------------------------------------
@@ -286,13 +383,15 @@ def _complete_json(
     response_model: type,
     settings: Settings,
     client: Any,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str, bool, int]:
+    """Returns (parsed, model_used, fallback_used, retries)."""
     if settings.L5_BACKEND == "gemini":
-        return _call_gemini(
-            prompt, response_model, required_keys, settings.L5_MODEL_GEMINI, client
+        return _call_gemini_with_chain(
+            prompt, response_model, required_keys, settings, client
         )
     if settings.L5_BACKEND == "anthropic":
-        return _call_llm(prompt, client, required_keys=required_keys)
+        result = _call_llm(prompt, client, required_keys=required_keys)
+        return result, _MODEL, False, 0
     raise ValueError(f"Unknown L5_BACKEND: {settings.L5_BACKEND!r}")
 
 
@@ -358,30 +457,38 @@ def resolve_l5(
         weights = _L5_DIALOGUE_WEIGHTS
         response_model = _DialogueLLMResponse
 
-    parsed = _complete_json(prompt, frozenset(weights), response_model, settings, client)
+    parsed, model_used, fallback_used, retries = _complete_json(
+        prompt, frozenset(weights), response_model, settings, client
+    )
     if parsed is None:
-        return _make_insufficient(genre)
+        return _make_insufficient(
+            genre, model_used=model_used, fallback_used=fallback_used, retries=retries
+        )
 
     subscores = {k: float(parsed[k]) for k in weights}
     score = _weighted_score(subscores, weights)
+    kw = dict(
+        resolution_score=round(score, 4),
+        subscores=subscores,
+        model_used=model_used,
+        fallback_used=fallback_used,
+        retries=retries,
+    )
 
     if genre == Genre.QA_RIDDLE:
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
             resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
-            resolution_score=round(score, 4),
-            subscores=subscores,
+            **kw,
         )
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
             resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
-            resolution_score=round(score, 4),
-            subscores=subscores,
+            **kw,
         )
     return L5DialogueResult(
         genre=genre,
         resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
-        resolution_score=round(score, 4),
-        subscores=subscores,
+        **kw,
     )
