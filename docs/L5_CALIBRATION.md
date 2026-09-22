@@ -1,39 +1,145 @@
 # L5 Calibration Report
 
-> **Status: NOT YET RUN — requires `ANTHROPIC_API_KEY`.**
->
-> To generate this report, set your API key and run:
-> ```
-> py -3.11 scripts/run_l5_calibration.py
-> ```
-> The script runs 5 passes over all 6 fixture items and overwrites this file
-> with the actual calibration table.
+> **STATUS: NO DATA.**
+> Run aborted — Gemini free-tier daily quota (RPD, `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20) exhausted.
+> Zero of 50 item-runs completed. This file is a placeholder; all figures below are INCOMPLETE.
+> Next action: `py -3.11 scripts/run_l5_calibration.py --probe` after daily quota resets (midnight Pacific), then `--resume`.
 
----
+Generated: 2026-09-22 18:26 UTC  
+Backend: `gemini`  
+Primary model: `gemini-3.6-flash`  
+Fallback chain: `['gemini-3.8-flash']`  
+Target runs: 5  
+Threshold: 0.6  
 
-## What this report will contain
+## 1. Full result table
 
-Once generated, this document reports:
+| ID | Genre | Expected | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 | Stable |
+|---|---|---|---|---|---|---|---|---|
+| S1 | QA RIDDLE | RESOLUTION_PASS | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| S2 | QA RIDDLE | RESOLUTION_FAIL | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| E1 | QA RIDDLE | RESOLUTION_PASS | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| X1 | QA RIDDLE | RESOLUTION_FAIL | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| A1 | DEFINITIONAL ONELINER | RESOLUTION_PASS | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| D1 | DIALOGUE MISUNDERSTANDING | RESOLUTION_PASS | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| P1 | QA RIDDLE | RESOLUTION_PASS | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| P2 | DEFINITIONAL ONELINER | RESOLUTION_FAIL | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| P3 | DIALOGUE MISUNDERSTANDING | RESOLUTION_PASS | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
+| N1 | DECLARATIVE | INSUFFICIENT_CONTEXT | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE | INCOMPLETE |
 
-- Per-item: expected status, observed status across 5 runs, score range (min/mean/max), stability flag
-- Score variance across runs (a proxy for model non-determinism; Claude 4.7-and-later models reject non-default temperature/top_p/top_k with a 400 error, so run-to-run variance is measured rather than suppressed)
-- Whether each fixture's `expected_l5_status` was confirmed, rejected, or unstable
+## Per-item subscores
 
-## Fixture summary
+### S1 — Why don't skeletons fight? Because they have no guts.
 
-| ID | Genre | Ambiguous term | Expected status | Notes |
-|---|---|---|---|---|
-| S1 | QA_RIDDLE | guts | RESOLUTION_PASS | Strong polarity flip (organs vs courage) |
-| S2 | QA_RIDDLE | horns | RESOLUTION_PASS | Strong polarity flip (animal vs vehicle) |
-| E1 | DEFINITIONAL_ONELINER | autobiography | RESOLUTION_PASS | Same-span anchor (resegmentation) — Decision 2 test case |
-| A1 | DEFINITIONAL_ONELINER | explain | RESOLUTION_FAIL | Deliberately weak split (`ex + plain`) — low contrast expected |
-| D1 | DIALOGUE_MISUNDERSTANDING | pull yourself together | RESOLUTION_PASS | Clear speaker misunderstanding |
-| X1 | DECLARATIVE | bank | INSUFFICIENT_CONTEXT | Anchoring FAIL (ONE_SENSE_ONLY) — L5 never calls LLM |
+- **Genre:** QA_RIDDLE
+- **Expected:** `RESOLUTION_PASS`
+- **Ambiguous term:** `guts`
 
-## Decision 2 validation
+*No data yet.*
 
-E1 (`autobiography`) is the critical test for ARCHITECTURE.md Decision 2.  Both sense anchors quote the same token (`autobiography`), which is correct for a resegmentation item.  A calibration run that finds E1 = RESOLUTION_PASS validates that the definitional prompt does not penalise same-span anchors when `anchor_relation == resegmentation`.
+### S2 — Why do skeletons fight? Because they have no guts.
 
-## Note on non-determinism
+- **Genre:** QA_RIDDLE
+- **Expected:** `RESOLUTION_FAIL`
+- **Ambiguous term:** `guts`
 
-Claude 4.7-and-later models reject non-default temperature/top_p/top_k with a 400 error, so run-to-run variance is measured rather than suppressed.  Five runs are recorded to measure this variance.  A stable item shows the same `resolution_status` in all 5 runs; an unstable item warrants prompt review.
+*No data yet.*
+
+### E1 — Why do elephants have a trunk? Because they don't have pockets to put 
+
+- **Genre:** QA_RIDDLE
+- **Expected:** `RESOLUTION_PASS`
+- **Ambiguous term:** `trunk`
+
+*No data yet.*
+
+### X1 — Why do elephants have a trunk? Because they are large grey mammals.
+
+- **Genre:** QA_RIDDLE
+- **Expected:** `RESOLUTION_FAIL`
+- **Ambiguous term:** `trunk`
+
+*No data yet.*
+
+### A1 — Autobiography: when your car starts telling you about its life.
+
+- **Genre:** DEFINITIONAL_ONELINER
+- **Expected:** `RESOLUTION_PASS`
+- **Ambiguous term:** `autobiography`
+
+*No data yet.*
+
+### D1 — Gerry: I've got shingles. Danny: Where are they? Gerry: Outside on the
+
+- **Genre:** DIALOGUE_MISUNDERSTANDING
+- **Expected:** `RESOLUTION_PASS`
+- **Ambiguous term:** `shingles`
+
+*No data yet.*
+
+### P1 — Why do cows wear bells? Because their horns don't work.
+
+- **Genre:** QA_RIDDLE
+- **Expected:** `RESOLUTION_PASS`
+- **Ambiguous term:** `horns`
+
+*No data yet.*
+
+### P2 — Explain: to make the plain exit.
+
+- **Genre:** DEFINITIONAL_ONELINER
+- **Expected:** `RESOLUTION_FAIL`
+- **Ambiguous term:** `explain`
+
+*No data yet.*
+
+### P3 — Patient: Doctor, I keep thinking I'm a pair of curtains. Doctor: Pull 
+
+- **Genre:** DIALOGUE_MISUNDERSTANDING
+- **Expected:** `RESOLUTION_PASS`
+- **Ambiguous term:** `pull yourself together`
+
+*No data yet.*
+
+### N1 — The bank was steep.
+
+- **Genre:** DECLARATIVE
+- **Expected:** `INSUFFICIENT_CONTEXT`
+- **Ambiguous term:** `bank`
+
+*No data yet.*
+
+## 2. polarity_or_direction: binary or graded?
+
+*No data yet.*
+
+## 3. Does polarity alone determine the verdict?
+
+With weight `polarity_or_direction = 0.45` and threshold `0.6`:
+
+- If `polarity = 0.0`: maximum score from other four features = 0.55 < 0.60 → **always FAIL** regardless of others.
+- If `polarity = 1.0`: score ≥ 0.45. Needs other features ≥ 0.15 for PASS at threshold 0.60.
+  - Threshold ≤ 0.45 would make polarity=1 a guaranteed PASS.
+  - Current threshold 0.60 is **not inert** — other features contribute 0.15 to tip a borderline case.
+
+*No data yet.*
+
+## 4. S1 vs S2 separation (polarity minimal pair)
+
+*No data yet.*
+
+## 5. E1 vs X1 separation (relevance minimal pair)
+
+*No data yet — E1/X1 has never been tested; this is the most informative number in the run.*
+
+## 6. Run-to-run variance
+
+*Not enough data to assess variance.*
+
+## 7. Failure accounting
+
+*No data yet.*
+
+## 8. Recommendation
+
+*Pending data.*

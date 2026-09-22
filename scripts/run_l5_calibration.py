@@ -1,22 +1,26 @@
-"""Run L5 calibration: 5 passes × 10 fixture items → docs/L5_CALIBRATION.md.
+"""Resumable L5 calibration: 5 passes × 10 fixtures → runs/l5_calibration.jsonl
+                                                          → docs/L5_CALIBRATION.md
 
 Usage:
-    py -3.11 scripts/run_l5_calibration.py
+    py -3.11 scripts/run_l5_calibration.py [--resume | --fresh] [--probe]
 
-Requires the active backend's API key:
-  gemini   → GEMINI_API_KEY
-  anthropic → ANTHROPIC_API_KEY
+Flags:
+    --resume   (default) Skip (item_id, run_index) pairs already in the JSONL.
+    --fresh    Delete the JSONL and start from scratch.
+    --probe    Make one cheap call; print OK/UNAVAILABLE and exit without running.
+
+Requires GEMINI_API_KEY (or ANTHROPIC_API_KEY when L5_BACKEND=anthropic).
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Add src to import path when running as a script from the project root.
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from doubletake.config import DEFAULT_SETTINGS
@@ -25,8 +29,23 @@ from doubletake.l5_resolution import resolve_l5
 from doubletake.schema import AnalysisRecord, L1Result, L4Result
 
 _FIXTURES_PATH = Path(__file__).parent.parent / "tests" / "fixtures" / "l5_anchors.jsonl"
+_RUNS_DIR = Path(__file__).parent.parent / "runs"
+_JSONL_PATH = _RUNS_DIR / "l5_calibration.jsonl"
+_RAW_DIR = _RUNS_DIR / "raw"
 _OUTPUT_PATH = Path(__file__).parent.parent / "docs" / "L5_CALIBRATION.md"
 _N_RUNS = 5
+
+
+# ---------------------------------------------------------------------------
+# Record building
+# ---------------------------------------------------------------------------
+
+def _load_fixtures() -> list[dict]:
+    return [
+        json.loads(line)
+        for line in _FIXTURES_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def _build_record(fixture: dict) -> tuple[AnalysisRecord, str]:
@@ -49,156 +68,467 @@ def _build_record(fixture: dict) -> tuple[AnalysisRecord, str]:
     return record, fixture["ambiguous_term"]
 
 
-def main() -> None:
-    fixtures = [
-        json.loads(line)
-        for line in _FIXTURES_PATH.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+# ---------------------------------------------------------------------------
+# Resume support
+# ---------------------------------------------------------------------------
 
-    # results[item_id][run_index] = {"status": ..., "score": ..., "subscores": ...}
-    results: dict[str, list[dict]] = {f["id"]: [] for f in fixtures}
-
-    print(f"Running {_N_RUNS} passes over {len(fixtures)} fixtures...")
-    for run_idx in range(_N_RUNS):
-        print(f"\n--- Run {run_idx + 1}/{_N_RUNS} ---")
-        for fixture in fixtures:
-            record, term = _build_record(fixture)
-            t0 = time.monotonic()
-            result = resolve_l5(record, DEFAULT_SETTINGS, ambiguous_term=term)
-            elapsed = round((time.monotonic() - t0) * 1000)
-            results[fixture["id"]].append({
-                "status": result.resolution_status,
-                "score": result.resolution_score,
-                "subscores": result.subscores,
-                "elapsed_ms": elapsed,
-            })
-            expected = fixture["expected_l5_status"]
-            match = "✓" if result.resolution_status == expected else "✗"
-            score_str = f"{result.resolution_score:.3f}" if result.resolution_score is not None else "None"
-            print(
-                f"  {fixture['id']:3s} {match} "
-                f"got={result.resolution_status:25s} "
-                f"exp={expected:25s} "
-                f"score={score_str} "
-                f"({elapsed}ms)"
-            )
-            time.sleep(DEFAULT_SETTINGS.L5_CALL_PAUSE_SECONDS)
-
-    _write_calibration_doc(fixtures, results)
-    print(f"\nCalibration written to {_OUTPUT_PATH}")
+def _load_completed() -> set[tuple[str, int]]:
+    if not _JSONL_PATH.exists():
+        return set()
+    completed: set[tuple[str, int]] = set()
+    for line in _JSONL_PATH.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            completed.add((row["item_id"], row["run_index"]))
+    return completed
 
 
-def _write_calibration_doc(
-    fixtures: list[dict],
-    results: dict[str, list[dict]],
-) -> None:
+# ---------------------------------------------------------------------------
+# Probe
+# ---------------------------------------------------------------------------
+
+def probe() -> None:
+    fixtures = _load_fixtures()
+    fixture = fixtures[0]
+    record, term = _build_record(fixture)
+    print(f"Probe: {DEFAULT_SETTINGS.L5_BACKEND} / {DEFAULT_SETTINGS.L5_MODEL_GEMINI}, fixture {fixture['id']}")
+    try:
+        result = resolve_l5(record, DEFAULT_SETTINGS, ambiguous_term=term)
+        print(f"OK: verdict={result.resolution_status} model={result.model_used} retries={result.retries}")
+        sys.exit(0)
+    except Exception as e:
+        print(f"UNAVAILABLE: {e}")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Main run loop
+# ---------------------------------------------------------------------------
+
+def run(fresh: bool) -> None:
+    _RUNS_DIR.mkdir(exist_ok=True)
+    _RAW_DIR.mkdir(exist_ok=True)
+
+    if fresh and _JSONL_PATH.exists():
+        _JSONL_PATH.unlink()
+        print("--fresh: deleted existing JSONL")
+
+    fixtures = _load_fixtures()
+    completed = _load_completed() if not fresh else set()
+    total = _N_RUNS * len(fixtures)
+    remaining = total - len(completed)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] fixtures={len(fixtures)} runs={_N_RUNS} completed={len(completed)} remaining={remaining}")
+
+    with _JSONL_PATH.open("a", encoding="utf-8") as jf:
+        for run_idx in range(_N_RUNS):
+            print(f"\n--- Run {run_idx + 1}/{_N_RUNS} ---")
+            for fixture in fixtures:
+                pair = (fixture["id"], run_idx)
+                if pair in completed:
+                    print(f"  {fixture['id']:3s} run={run_idx} SKIP")
+                    continue
+
+                record, term = _build_record(fixture)
+                t0 = time.monotonic()
+                try:
+                    result = resolve_l5(record, DEFAULT_SETTINGS, ambiguous_term=term)
+                except Exception as e:
+                    print(f"  {fixture['id']:3s} run={run_idx} ERROR ({type(e).__name__}): {e}")
+                    continue  # not written; will retry on resume
+
+                elapsed_ms = round((time.monotonic() - t0) * 1000)
+
+                # Save raw LLM output (subscores as returned)
+                raw_path = _RAW_DIR / f"{fixture['id']}_{run_idx:02d}.json"
+                raw_path.write_text(
+                    json.dumps(result.subscores, indent=2, default=str),
+                    encoding="utf-8",
+                )
+
+                row = {
+                    "item_id": fixture["id"],
+                    "run_index": run_idx,
+                    "backend": DEFAULT_SETTINGS.L5_BACKEND,
+                    "model_used": result.model_used,
+                    "fallback_used": result.fallback_used,
+                    "subscores": result.subscores,
+                    "resolution_score": result.resolution_score,
+                    "verdict": str(result.resolution_status),
+                    "retries": result.retries,
+                    "wall_clock_ms": elapsed_ms,
+                    "raw_response_path": str(raw_path.relative_to(Path(__file__).parent.parent)),
+                }
+                jf.write(json.dumps(row) + "\n")
+                jf.flush()
+
+                match = "OK" if str(result.resolution_status) == fixture["expected_l5_status"] else "!!"
+                score_str = f"{result.resolution_score:.3f}" if result.resolution_score is not None else "None"
+                print(
+                    f"  {fixture['id']:3s} {match} verdict={str(result.resolution_status):30s} "
+                    f"score={score_str} model={result.model_used}"
+                    f"{' [fallback]' if result.fallback_used else ''} "
+                    f"retries={result.retries} ({elapsed_ms}ms)"
+                )
+
+                time.sleep(DEFAULT_SETTINGS.L5_CALL_PAUSE_SECONDS)
+
+    _write_calibration_doc()
+    print(f"\nCalibration doc written to {_OUTPUT_PATH}")
+
+
+# ---------------------------------------------------------------------------
+# Document generation (built entirely from the JSONL)
+# ---------------------------------------------------------------------------
+
+def _write_calibration_doc() -> None:
+    fixtures = _load_fixtures()
+    fixture_ids = [f["id"] for f in fixtures]
+    fixture_map = {f["id"]: f for f in fixtures}
+
+    # Load all rows into grid[item_id][run_index] = row
+    grid: dict[str, dict[int, dict]] = {fid: {} for fid in fixture_ids}
+    if _JSONL_PATH.exists():
+        for line in _JSONL_PATH.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                grid[row["item_id"]][row["run_index"]] = row
+
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines: list[str] = []
 
-    lines.append("# L5 Calibration Report")
-    lines.append("")
-    backend = DEFAULT_SETTINGS.L5_BACKEND
-    if backend == "gemini":
-        model_id = DEFAULT_SETTINGS.L5_MODEL_GEMINI
-    else:
-        model_id = "claude-sonnet-4-6"
-    lines.append(f"Generated: {ts}  ")
-    lines.append(f"Backend: `{backend}`  ")
-    lines.append(f"Model: `{model_id}`  ")
-    lines.append(f"Runs: {_N_RUNS}  ")
-    lines.append(f"Threshold: {DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}  ")
-    lines.append("")
+    lines += [
+        "# L5 Calibration Report",
+        "",
+        f"Generated: {ts}  ",
+        f"Backend: `{DEFAULT_SETTINGS.L5_BACKEND}`  ",
+        f"Primary model: `{DEFAULT_SETTINGS.L5_MODEL_GEMINI}`  ",
+        f"Fallback chain: `{DEFAULT_SETTINGS.L5_MODEL_GEMINI_CHAIN}`  ",
+        f"Target runs: {_N_RUNS}  ",
+        f"Threshold: {DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}  ",
+        "",
+    ]
 
-    lines.append("## Summary table")
-    lines.append("")
-    lines.append("| ID | Genre | Expected | Runs pass | Scores (min / mean / max) | Stable? |")
-    lines.append("|---|---|---|---|---|---|")
+    # --- Q1: Full table ---
+    lines += ["## 1. Full result table", ""]
+    header = "| ID | Genre | Expected | " + " | ".join(f"Run {i+1}" for i in range(_N_RUNS)) + " | Stable |"
+    sep = "|---|---|---|" + "|".join(["---"] * _N_RUNS) + "|---|"
+    lines += [header, sep]
 
-    for fixture in fixtures:
-        fid = fixture["id"]
-        genre = fixture["genre"]
-        expected = fixture["expected_l5_status"]
-        runs = results[fid]
-        statuses = [r["status"] for r in runs]
-        pass_count = sum(1 for s in statuses if s == expected)
-        numeric_scores = [r["score"] for r in runs if r["score"] is not None]
-        if numeric_scores:
-            score_range = (
-                f"{min(numeric_scores):.3f} / "
-                f"{sum(numeric_scores)/len(numeric_scores):.3f} / "
-                f"{max(numeric_scores):.3f}"
-            )
-        else:
-            score_range = "None (INSUFFICIENT_CONTEXT)"
-        stable = "Yes" if len(set(statuses)) == 1 else "No"
-        lines.append(
-            f"| {fid} | {genre} | {expected} | {pass_count}/{_N_RUNS} "
-            f"| {score_range} | {stable} |"
+    for fid in fixture_ids:
+        f = fixture_map[fid]
+        expected = f["expected_l5_status"]
+        runs_data = grid[fid]
+        cells = []
+        verdicts = []
+        for r in range(_N_RUNS):
+            if r in runs_data:
+                row = runs_data[r]
+                v = row["verdict"]
+                score = row["resolution_score"]
+                s = f"{score:.3f}" if score is not None else "None"
+                match = "OK" if v == expected else "!!"
+                cells.append(f"{match} {v.replace('RESOLUTION_', '')[:4]} {s}")
+                verdicts.append(v)
+            else:
+                cells.append("INCOMPLETE")
+        stable = "Yes" if len(set(verdicts)) == 1 and len(verdicts) == _N_RUNS else (
+            "INCOMPLETE" if len(verdicts) < _N_RUNS else "No"
         )
+        lines.append(f"| {fid} | {f['genre'].replace('_', ' ')} | {expected} | " +
+                     " | ".join(cells) + f" | {stable} |")
 
     lines.append("")
-    lines.append("## Per-item detail")
-    lines.append("")
 
-    for fixture in fixtures:
-        fid = fixture["id"]
-        lines.append(f"### {fid} — {fixture['text'][:70]}")
-        lines.append("")
-        lines.append(f"- **Genre:** {fixture['genre']}")
-        lines.append(f"- **Ambiguous term:** `{fixture['ambiguous_term']}`")
-        lines.append(f"- **Expected status:** `{fixture['expected_l5_status']}`")
-        lines.append(f"- **Anchor relation:** `{fixture['l4_result'].get('anchor_relation', 'null')}`")
-        lines.append(f"- **Anchoring status:** `{fixture['l4_result']['anchoring_status']}`")
-        lines.append("")
+    # --- Per-item detail with subscores ---
+    lines += ["## Per-item subscores", ""]
+    qa_weights = DEFAULT_SETTINGS.L5_QA_WEIGHTS
 
-        lines.append("| Run | Status | Score | Subscores |")
-        lines.append("|---|---|---|---|")
-        for i, run in enumerate(results[fid], 1):
-            subscore_str = ", ".join(
-                f"{k}={v:.2f}" for k, v in run["subscores"].items()
-            )
-            score_cell = f"{run['score']:.4f}" if run["score"] is not None else "None"
-            lines.append(
-                f"| {i} | `{run['status']}` | {score_cell} | {subscore_str} |"
-            )
+    for fid in fixture_ids:
+        f = fixture_map[fid]
+        runs_data = grid[fid]
+        lines += [f"### {fid} — {f['text'][:70]}", ""]
+        lines += [f"- **Genre:** {f['genre']}", f"- **Expected:** `{f['expected_l5_status']}`",
+                  f"- **Ambiguous term:** `{f['ambiguous_term']}`", ""]
 
-        # Analysis
-        statuses = [r["status"] for r in results[fid]]
-        unique = set(statuses)
-        expected = fixture["expected_l5_status"]
-        match_count = sum(1 for s in statuses if s == expected)
+        if not runs_data:
+            lines += ["*No data yet.*", ""]
+            continue
 
-        lines.append("")
-        if match_count == _N_RUNS:
-            lines.append(f"**Verdict:** All {_N_RUNS} runs match expected `{expected}`.")
-        elif match_count == 0:
-            lines.append(
-                f"**Verdict:** No run matched expected `{expected}` "
-                f"(got {unique}). See notes below."
-            )
+        # Build subscore header from first available run
+        first_row = next(iter(runs_data.values()))
+        subscore_keys = list(first_row["subscores"].keys()) if first_row["subscores"] else []
+
+        if subscore_keys:
+            lines.append("| Run | Verdict | Score | " + " | ".join(subscore_keys) + " | Model | Retries |")
+            lines.append("|---|---|---|" + "|".join(["---"] * len(subscore_keys)) + "|---|---|")
+            for r in range(_N_RUNS):
+                if r in runs_data:
+                    row = runs_data[r]
+                    score_str = f"{row['resolution_score']:.4f}" if row["resolution_score"] is not None else "None"
+                    subscore_cells = [f"{row['subscores'].get(k, 'N/A'):.2f}" if isinstance(row['subscores'].get(k), float) else "N/A"
+                                      for k in subscore_keys]
+                    model_label = row["model_used"] + (" [fb]" if row["fallback_used"] else "")
+                    lines.append(f"| {r+1} | `{row['verdict']}` | {score_str} | " +
+                                 " | ".join(subscore_cells) + f" | {model_label} | {row['retries']} |")
+                else:
+                    lines.append(f"| {r+1} | INCOMPLETE | — |" + " — |" * len(subscore_keys) + " — | — |")
         else:
-            lines.append(
-                f"**Verdict:** {match_count}/{_N_RUNS} runs match expected `{expected}` "
-                f"(unstable — statuses varied: {unique})."
-            )
+            lines.append("| Run | Verdict | Score | Model |")
+            lines.append("|---|---|---|---|")
+            for r in range(_N_RUNS):
+                if r in runs_data:
+                    row = runs_data[r]
+                    score_str = f"{row['resolution_score']:.4f}" if row["resolution_score"] is not None else "None"
+                    lines.append(f"| {r+1} | `{row['verdict']}` | {score_str} | {row['model_used']} |")
+                else:
+                    lines.append(f"| {r+1} | INCOMPLETE | — | — |")
+
         lines.append("")
 
-    lines.append("## Notes")
-    lines.append("")
-    lines.append("- P2 (`explain`) is a deliberately weak compound-split item; "
-                 "RESOLUTION_FAIL is expected because the punchline does not "
-                 "exploit the resegmentation contrast.")
-    lines.append("- N1 (`bank`) has anchoring_status=ONE_SENSE_ONLY; L5 short-circuits "
-                 "before calling the LLM and always returns INSUFFICIENT_CONTEXT "
-                 "(score=None).")
-    lines.append("- S1/S2 are a minimal pair for polarity: S1 (skeletons don't fight → "
-                 "PASS) and S2 (skeletons do fight → FAIL) test polarity_or_direction.")
-    lines.append("- Gemini backend uses temperature=0.0 via GenerateContentConfig; "
-                 "score variance across runs should be lower than Anthropic.")
-    lines.append("")
+    # --- Q2: Is polarity_or_direction binary? ---
+    lines += ["## 2. polarity_or_direction: binary or graded?", ""]
+    polarity_vals: list[float] = []
+    for fid in fixture_ids:
+        for row in grid[fid].values():
+            v = row["subscores"].get("polarity_or_direction")
+            if v is not None:
+                polarity_vals.append(float(v))
+
+    if not polarity_vals:
+        lines += ["*No data yet.*", ""]
+    else:
+        near_binary = sum(1 for v in polarity_vals if v < 0.1 or v > 0.9)
+        graded = len(polarity_vals) - near_binary
+        lines += [
+            f"Observed `polarity_or_direction` values across {len(polarity_vals)} QA/applicable calls:",
+            f"- Near-binary (< 0.1 or > 0.9): **{near_binary}** ({100*near_binary//len(polarity_vals)}%)",
+            f"- Graded (0.1–0.9): **{graded}**",
+            "",
+            f"Min: {min(polarity_vals):.3f}, Max: {max(polarity_vals):.3f}, "
+            f"Mean: {sum(polarity_vals)/len(polarity_vals):.3f}",
+            "",
+        ]
+        if graded == 0:
+            lines += [
+                "**Verdict: BINARY** — all observed values are near 0.0 or 1.0. "
+                "The model treats polarity as a binary signal.",
+                "",
+            ]
+        else:
+            lines += [
+                "**Verdict: GRADED** — some values fall between 0.1 and 0.9.",
+                "",
+            ]
+
+    # --- Q3: Does polarity alone determine the verdict? ---
+    lines += ["## 3. Does polarity alone determine the verdict?", ""]
+    lines += [
+        f"With weight `polarity_or_direction = 0.45` and threshold `{DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}`:",
+        "",
+        "- If `polarity = 0.0`: maximum score from other four features = 0.55 < 0.60 → **always FAIL** regardless of others.",
+        "- If `polarity = 1.0`: score ≥ 0.45. Needs other features ≥ 0.15 for PASS at threshold 0.60.",
+        f"  - Threshold ≤ 0.45 would make polarity=1 a guaranteed PASS.",
+        f"  - Current threshold 0.60 is **not inert** — other features contribute 0.15 to tip a borderline case.",
+        "",
+    ]
+
+    # From actual data: find any case where polarity=1 but FAIL, or polarity=0 but PASS
+    polarity_1_fail = []
+    polarity_0_pass = []
+    for fid in fixture_ids:
+        for r, row in grid[fid].items():
+            p = row["subscores"].get("polarity_or_direction")
+            v = row["verdict"]
+            if p is not None:
+                if p > 0.9 and v == "RESOLUTION_FAIL":
+                    polarity_1_fail.append(f"{fid}/run{r+1}")
+                if p < 0.1 and v == "RESOLUTION_PASS":
+                    polarity_0_pass.append(f"{fid}/run{r+1}")
+
+    if not polarity_vals:
+        lines += ["*No data yet.*", ""]
+    else:
+        if polarity_1_fail:
+            lines += [f"**Data confirms non-inert threshold**: polarity=1 but FAIL in: {polarity_1_fail}", ""]
+        else:
+            lines += ["From the data: no case where polarity≈1.0 led to RESOLUTION_FAIL. "
+                      "In practice polarity dominates, but the threshold is not mathematically inert.", ""]
+        if polarity_0_pass:
+            lines += [f"Polarity=0 but PASS (should be impossible): {polarity_0_pass}", ""]
+
+    # --- Q4: S1 vs S2 separation ---
+    lines += ["## 4. S1 vs S2 separation (polarity minimal pair)", ""]
+    s1_scores = [grid["S1"][r]["resolution_score"] for r in range(_N_RUNS) if r in grid["S1"] and grid["S1"][r]["resolution_score"] is not None]
+    s2_scores = [grid["S2"][r]["resolution_score"] for r in range(_N_RUNS) if r in grid["S2"] and grid["S2"][r]["resolution_score"] is not None]
+
+    if s1_scores and s2_scores:
+        s1_mean = sum(s1_scores) / len(s1_scores)
+        s2_mean = sum(s2_scores) / len(s2_scores)
+        gap = s1_mean - s2_mean
+        lines += [
+            f"- S1 (PASS expected): scores {[f'{s:.3f}' for s in s1_scores]}, mean = **{s1_mean:.3f}**",
+            f"- S2 (FAIL expected): scores {[f'{s:.3f}' for s in s2_scores]}, mean = **{s2_mean:.3f}**",
+            f"- Gap (S1 − S2): **{gap:.3f}**",
+            "",
+        ]
+        if gap < 0.1:
+            lines += ["**Warning**: gap < 0.10 — L5 is barely separating the polarity minimal pair.", ""]
+        elif gap < 0.3:
+            lines += ["Gap is modest. L5 separates the pair but polarity signal is weak.", ""]
+        else:
+            lines += ["Gap is substantial. L5 reliably separates the polarity minimal pair.", ""]
+    elif s1_scores or s2_scores:
+        lines += ["*S1 or S2 partially complete — gap cannot be computed yet.*", ""]
+    else:
+        lines += ["*No data yet.*", ""]
+
+    # --- Q5: E1 vs X1 separation ---
+    lines += ["## 5. E1 vs X1 separation (relevance minimal pair)", ""]
+    e1_scores = [grid["E1"][r]["resolution_score"] for r in range(_N_RUNS) if r in grid["E1"] and grid["E1"][r]["resolution_score"] is not None]
+    x1_scores = [grid["X1"][r]["resolution_score"] for r in range(_N_RUNS) if r in grid["X1"] and grid["X1"][r]["resolution_score"] is not None]
+
+    if e1_scores and x1_scores:
+        e1_mean = sum(e1_scores) / len(e1_scores)
+        x1_mean = sum(x1_scores) / len(x1_scores)
+        gap = e1_mean - x1_mean
+        lines += [
+            f"- E1 (PASS expected — trunk/pockets joke): scores {[f'{s:.3f}' for s in e1_scores]}, mean = **{e1_mean:.3f}**",
+            f"- X1 (FAIL expected — trunk/grey mammals non-joke): scores {[f'{s:.3f}' for s in x1_scores]}, mean = **{x1_mean:.3f}**",
+            f"- Gap (E1 − X1): **{gap:.3f}**",
+            "",
+        ]
+        if gap < 0.1:
+            lines += ["**Warning**: gap < 0.10 — L5 is not separating the relevance minimal pair. "
+                      "This is the most informative number in the run.", ""]
+        elif gap < 0.3:
+            lines += ["Modest gap — L5 partially distinguishes joke from non-joke (relevance pair). "
+                      "This is the most informative number in the run.", ""]
+        else:
+            lines += ["Strong gap — L5 reliably separates the relevance minimal pair.", ""]
+    elif e1_scores or x1_scores:
+        lines += ["*E1 or X1 partially complete — gap cannot be computed yet.*", ""]
+    else:
+        lines += ["*No data yet — E1/X1 has never been tested; this is the most informative number in the run.*", ""]
+
+    # --- Q6: Run-to-run variance ---
+    lines += ["## 6. Run-to-run variance", ""]
+    unstable = []
+    for fid in fixture_ids:
+        runs_data = grid[fid]
+        if len(runs_data) < _N_RUNS:
+            continue
+        verdicts = [runs_data[r]["verdict"] for r in range(_N_RUNS)]
+        if len(set(verdicts)) > 1:
+            unstable.append(f"{fid}: {verdicts}")
+
+    complete_items = [fid for fid in fixture_ids if len(grid[fid]) == _N_RUNS]
+    if not complete_items:
+        lines += ["*Not enough data to assess variance.*", ""]
+    elif not unstable:
+        lines += [f"All {len(complete_items)} complete items stable across {_N_RUNS} runs (verdict identical in all runs).", ""]
+    else:
+        lines += [f"{len(unstable)} item(s) with unstable verdict:", ""]
+        for item in unstable:
+            lines += [f"- {item}", ""]
+        lines += ["Note: temperature=0 does not guarantee determinism with Gemini schema-constrained output.", ""]
+
+    # --- Q7: Failure accounting ---
+    lines += ["## 7. Failure accounting", ""]
+    all_rows = [grid[fid][r] for fid in fixture_ids for r in range(_N_RUNS) if r in grid[fid]]
+    n_total = len(all_rows)
+    n_5xx = sum(1 for row in all_rows if row["retries"] > 0)
+    n_fallback = sum(1 for row in all_rows if row["fallback_used"])
+    insufficient = [row for row in all_rows if row["verdict"] == "INSUFFICIENT_CONTEXT"]
+    n_insufficient = len(insufficient)
+    # N1 is always INSUFFICIENT_CONTEXT by design (anchoring pre-check, no LLM call)
+    n_insufficient_by_design = sum(1 for row in insufficient if row["item_id"] == "N1")
+    n_insufficient_schema = n_insufficient - n_insufficient_by_design
+
+    if n_total == 0:
+        lines += ["*No data yet.*", ""]
+    else:
+        lines += [
+            f"- Completed rows: **{n_total}** / {_N_RUNS * len(fixture_ids)}",
+            f"- Rows with 5xx retries: **{n_5xx}** ({100*n_5xx//n_total}%)",
+            f"- Rows using fallback model: **{n_fallback}** ({100*n_fallback//n_total}%)",
+            f"- INSUFFICIENT_CONTEXT total: **{n_insufficient}**",
+            f"  - By design (N1 anchoring pre-check, no LLM call): **{n_insufficient_by_design}**",
+            f"  - Schema/parse failure (LLM called but response unparseable): **{n_insufficient_schema}**",
+            "",
+        ]
+        if n_insufficient_schema > 0:
+            schema_items = [row["item_id"] for row in insufficient if row["item_id"] != "N1"]
+            lines += [f"  Items with unexpected INSUFFICIENT_CONTEXT: {schema_items}", ""]
+
+    # --- Q8: Recommendation ---
+    lines += ["## 8. Recommendation", ""]
+    if not all_rows:
+        lines += ["*Pending data.*", ""]
+    else:
+        # Assess based on S1/S2 and E1/X1 separation
+        rec_lines = []
+        if s1_scores and s2_scores:
+            gap_s = s1_mean - s2_mean
+            if gap_s < 0.1:
+                rec_lines.append("S1/S2 gap is near-zero — the polarity feature is not separating the core minimal pair. "
+                                 "Replace the weighted score with a polarity-only rule, or redesign the QA prompt.")
+            elif gap_s < 0.3:
+                rec_lines.append("S1/S2 gap is modest. Keep current weights but investigate whether "
+                                 "answer_relevance adds signal beyond polarity.")
+            else:
+                rec_lines.append("S1/S2 separation is strong. Current QA weights appear functional.")
+
+        if e1_scores and x1_scores:
+            gap_r = e1_mean - x1_mean
+            if gap_r < 0.1:
+                rec_lines.append("E1/X1 gap is near-zero — L5 does not distinguish a genuine joke from a "
+                                 "non-joke answer to the same question. This is the critical failure mode. "
+                                 "The answer_relevance and causal features need redesign.")
+            elif gap_r < 0.3:
+                rec_lines.append("E1/X1 gap is moderate. L5 partially discriminates joke vs non-joke answers. "
+                                 "Consider upweighting answer_relevance.")
+            else:
+                rec_lines.append("E1/X1 separation is strong. Relevance features are working.")
+
+        if unstable:
+            rec_lines.append(f"Unstable items ({[i.split(':')[0] for i in unstable]}) suggest temperature=0 "
+                             "is insufficient for determinism; consider majority-vote over 3 calls.")
+
+        if not rec_lines:
+            rec_lines.append("Insufficient data for a recommendation.")
+
+        for r in rec_lines:
+            lines += [r, ""]
+
+        lines += [
+            "**RECOMMEND ONLY — no weights, thresholds, or prompts have been changed in this report.**",
+            "",
+        ]
 
     _OUTPUT_PATH.write_text("\n".join(lines), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--resume", action="store_true", default=True,
+                       help="Skip already-completed pairs (default)")
+    group.add_argument("--fresh", action="store_true", default=False,
+                       help="Delete JSONL and start from scratch")
+    parser.add_argument("--probe", action="store_true",
+                        help="Make one test call and exit")
+    args = parser.parse_args()
+
+    if args.probe:
+        probe()
+        return
+
+    run(fresh=args.fresh)
 
 
 if __name__ == "__main__":
