@@ -1,0 +1,3 @@
+{"id":"J01","gold_label":"VALID_HOMOGRAPH_JOKE","genre":"QA_RIDDLE","ambiguous_term":"guts","sense_a":"internal organs","sense_b":"courage","expected_age_verdict":{"6":"PARTIALLY_COMPREHENSIBLE","8":"FULLY_AGE_APPROPRIATE","10":"FULLY_AGE_APPROPRIATE"}}
+{"id":"J02","gold_label":"VALID_COMPOUND_SPLIT_JOKE","genre":"DEFINITIONAL_ONELINER","ambiguous_term":"autobiography","sense_a":"a person's account of their own life","sense_b":"auto + biography (a car's life story)","expected_age_verdict":{"10":"FULLY_AGE_APPROPRIATE","12":"FULLY_AGE_APPROPRIATE"}}
+{"id":"N01","gold_label":"ONE_SENSE_ONLY","genre":"DECLARATIVE","ambiguous_term":"trunk","sense_a":"an elephant's long nose","sense_b":"a storage container","expected_age_verdict":{"8":"FULLY_AGE_APPROPRIATE"}}

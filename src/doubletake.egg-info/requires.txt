@@ -1,0 +1,4 @@
+pydantic>=2
+
+[test]
+pytest>=7

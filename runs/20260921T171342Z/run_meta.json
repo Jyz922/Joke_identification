@@ -1,0 +1,25 @@
+{
+  "timestamp": "20260921T171342Z",
+  "git_sha": "5c07fba305fa89b1e9fcb77df4b9db7d682786b5",
+  "blind_path": "tests/fixtures/sample_blind.jsonl",
+  "config": {
+    "MAX_INPUT_CHARS": 500,
+    "MIN_INPUT_CHARS": 3,
+    "MAX_NON_ASCII_RATIO": 0.15,
+    "L3_TOP_K": 3,
+    "L5_QA_WEIGHTS": {
+      "polarity_or_direction": 0.45,
+      "answer_relevance": 0.25,
+      "causal": 0.15,
+      "agent": 0.1,
+      "tense_aspect": 0.05
+    },
+    "L5_RESOLUTION_THRESHOLD": 0.6
+  },
+  "layers": [
+    "L0-pre",
+    "L5",
+    "L0-post"
+  ],
+  "item_count": 3
+}
