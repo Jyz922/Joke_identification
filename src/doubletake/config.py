@@ -15,6 +15,8 @@ Deliberate deviations from README
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, model_validator
 
 
@@ -49,6 +51,12 @@ class Settings(BaseModel):
     # candidate score — see module docstring, deviation 1.
     L3_TOP_K: int = 3
 
+    # --- L5 backend ------------------------------------------------------
+    L5_BACKEND: Literal["gemini", "anthropic"] = "gemini"
+    # gemini-2.5-flash is unavailable to new accounts; model availability
+    # depends on account age.  Pin exact IDs; never use -latest aliases.
+    L5_MODEL_GEMINI: str = "gemini-3.6-flash"
+
     # --- L5 QA resolution ------------------------------------------------
     # Weights must sum to 1.0 (asserted below).
     L5_QA_WEIGHTS: dict[str, float] = {
@@ -62,6 +70,9 @@ class Settings(BaseModel):
     # Not named in README — declared here as a single source of truth.
     # See module docstring, deviation 2.
     L5_RESOLUTION_THRESHOLD: float = 0.60
+    # Pause between API calls in the calibration script.
+    # Free-tier Gemini is ~10–15 req/min → 6 s keeps us well inside the limit.
+    L5_CALL_PAUSE_SECONDS: float = 6.0
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> "Settings":

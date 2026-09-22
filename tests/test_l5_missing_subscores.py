@@ -36,13 +36,22 @@ def _qa_record() -> AnalysisRecord:
 
 
 def _client_always_omitting(field: str) -> MagicMock:
-    """Mock client that always returns a response missing *field*."""
+    """Mock client that always returns a response missing *field*.
+
+    Mocks both backends so the same client object works regardless of which
+    backend is active.  Only the active backend's mock is actually called.
+    """
     complete = {k: 0.8 for k in DEFAULT_SETTINGS.L5_QA_WEIGHTS}
     incomplete = json.dumps({k: v for k, v in complete.items() if k != field})
     client = MagicMock()
-    r = MagicMock()
-    r.content = [MagicMock(text=incomplete)]
-    client.messages.create.return_value = r
+    # Anthropic path
+    r_anthropic = MagicMock()
+    r_anthropic.content = [MagicMock(text=incomplete)]
+    client.messages.create.return_value = r_anthropic
+    # Gemini path
+    r_gemini = MagicMock()
+    r_gemini.text = incomplete
+    client.models.generate_content.return_value = r_gemini
     return client
 
 
@@ -61,8 +70,12 @@ def test_missing_qa_subscore_triggers_retry_and_insufficient_context(
     with caplog.at_level(logging.WARNING, logger="doubletake.l5_resolution"):
         result = resolve_l5(record, DEFAULT_SETTINGS, ambiguous_term="guts", client=client)
 
-    assert client.messages.create.call_count == 2, (
-        f"Expected 2 LLM calls (initial + 1 retry), got {client.messages.create.call_count}"
+    if DEFAULT_SETTINGS.L5_BACKEND == "gemini":
+        call_count = client.models.generate_content.call_count
+    else:
+        call_count = client.messages.create.call_count
+    assert call_count == 2, (
+        f"Expected 2 LLM calls (initial + 1 retry), got {call_count}"
     )
     assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT, (
         f"Missing {missing_field!r} should yield INSUFFICIENT_CONTEXT, "

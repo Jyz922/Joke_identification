@@ -1,9 +1,11 @@
-"""Run L5 calibration: 5 passes × 6 fixture items → docs/L5_CALIBRATION.md.
+"""Run L5 calibration: 5 passes × 10 fixture items → docs/L5_CALIBRATION.md.
 
 Usage:
     py -3.11 scripts/run_l5_calibration.py
 
-Requires ANTHROPIC_API_KEY to be set in the environment.
+Requires the active backend's API key:
+  gemini   → GEMINI_API_KEY
+  anthropic → ANTHROPIC_API_KEY
 """
 
 from __future__ import annotations
@@ -73,13 +75,15 @@ def main() -> None:
             })
             expected = fixture["expected_l5_status"]
             match = "✓" if result.resolution_status == expected else "✗"
+            score_str = f"{result.resolution_score:.3f}" if result.resolution_score is not None else "None"
             print(
                 f"  {fixture['id']:3s} {match} "
                 f"got={result.resolution_status:25s} "
                 f"exp={expected:25s} "
-                f"score={result.resolution_score:.3f} "
+                f"score={score_str} "
                 f"({elapsed}ms)"
             )
+            time.sleep(DEFAULT_SETTINGS.L5_CALL_PAUSE_SECONDS)
 
     _write_calibration_doc(fixtures, results)
     print(f"\nCalibration written to {_OUTPUT_PATH}")
@@ -94,8 +98,14 @@ def _write_calibration_doc(
 
     lines.append("# L5 Calibration Report")
     lines.append("")
+    backend = DEFAULT_SETTINGS.L5_BACKEND
+    if backend == "gemini":
+        model_id = DEFAULT_SETTINGS.L5_MODEL_GEMINI
+    else:
+        model_id = "claude-sonnet-4-6"
     lines.append(f"Generated: {ts}  ")
-    lines.append(f"Model: `claude-sonnet-4-6`  ")
+    lines.append(f"Backend: `{backend}`  ")
+    lines.append(f"Model: `{model_id}`  ")
     lines.append(f"Runs: {_N_RUNS}  ")
     lines.append(f"Threshold: {DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}  ")
     lines.append("")
@@ -110,16 +120,21 @@ def _write_calibration_doc(
         genre = fixture["genre"]
         expected = fixture["expected_l5_status"]
         runs = results[fid]
-        scores = [r["score"] for r in runs]
         statuses = [r["status"] for r in runs]
         pass_count = sum(1 for s in statuses if s == expected)
-        score_min = min(scores)
-        score_mean = sum(scores) / len(scores)
-        score_max = max(scores)
+        numeric_scores = [r["score"] for r in runs if r["score"] is not None]
+        if numeric_scores:
+            score_range = (
+                f"{min(numeric_scores):.3f} / "
+                f"{sum(numeric_scores)/len(numeric_scores):.3f} / "
+                f"{max(numeric_scores):.3f}"
+            )
+        else:
+            score_range = "None (INSUFFICIENT_CONTEXT)"
         stable = "Yes" if len(set(statuses)) == 1 else "No"
         lines.append(
             f"| {fid} | {genre} | {expected} | {pass_count}/{_N_RUNS} "
-            f"| {score_min:.3f} / {score_mean:.3f} / {score_max:.3f} | {stable} |"
+            f"| {score_range} | {stable} |"
         )
 
     lines.append("")
@@ -143,8 +158,9 @@ def _write_calibration_doc(
             subscore_str = ", ".join(
                 f"{k}={v:.2f}" for k, v in run["subscores"].items()
             )
+            score_cell = f"{run['score']:.4f}" if run["score"] is not None else "None"
             lines.append(
-                f"| {i} | `{run['status']}` | {run['score']:.4f} | {subscore_str} |"
+                f"| {i} | `{run['status']}` | {score_cell} | {subscore_str} |"
             )
 
         # Analysis
@@ -170,13 +186,16 @@ def _write_calibration_doc(
 
     lines.append("## Notes")
     lines.append("")
-    lines.append("- A1 (`explain`) is a deliberately weak compound-split item; "
-                 "RESOLUTION_FAIL is expected if contrast_strength is scored low.")
-    lines.append("- X1 (`bank`) has anchoring_status=ONE_SENSE_ONLY; L5 short-circuits "
-                 "before calling the LLM and always returns INSUFFICIENT_CONTEXT.")
-    lines.append("- Score variance across runs reflects model non-determinism. "
-                 "Claude 4.7-and-later models reject non-default temperature/top_p/top_k "
-                 "with a 400 error, so run-to-run variance is measured rather than suppressed.")
+    lines.append("- P2 (`explain`) is a deliberately weak compound-split item; "
+                 "RESOLUTION_FAIL is expected because the punchline does not "
+                 "exploit the resegmentation contrast.")
+    lines.append("- N1 (`bank`) has anchoring_status=ONE_SENSE_ONLY; L5 short-circuits "
+                 "before calling the LLM and always returns INSUFFICIENT_CONTEXT "
+                 "(score=None).")
+    lines.append("- S1/S2 are a minimal pair for polarity: S1 (skeletons don't fight → "
+                 "PASS) and S2 (skeletons do fight → FAIL) test polarity_or_direction.")
+    lines.append("- Gemini backend uses temperature=0.0 via GenerateContentConfig; "
+                 "score variance across runs should be lower than Anthropic.")
     lines.append("")
 
     _OUTPUT_PATH.write_text("\n".join(lines), encoding="utf-8")

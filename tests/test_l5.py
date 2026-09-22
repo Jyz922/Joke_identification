@@ -5,16 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from google.genai.errors import ClientError as GeminiClientError
 from pydantic import ValidationError
 
-from doubletake.config import DEFAULT_SETTINGS
+from doubletake.config import DEFAULT_SETTINGS, Settings
 from doubletake.enums import AnchorRelation, AnchoringStatus, Genre, ResolutionStatus
 from doubletake.l5_resolution import (
     _L5_DEFINITIONAL_WEIGHTS,
     _L5_DIALOGUE_WEIGHTS,
+    _gemini_generate,
     resolve_l5,
 )
 from doubletake.schema import (
@@ -46,14 +48,22 @@ def _make_record(
 
 
 def _mock_client(responses: list[str]) -> MagicMock:
-    """Return a mock Anthropic client whose messages.create() yields each response in turn."""
+    """Return a mock client whose LLM method yields each response in turn.
+
+    Both backend interfaces are mocked so the same object works regardless of
+    which backend is active.  Only the active backend's mock is called.
+    """
     client = MagicMock()
-    msgs = []
+    anthropic_msgs, gemini_msgs = [], []
     for text in responses:
-        m = MagicMock()
-        m.content = [MagicMock(text=text)]
-        msgs.append(m)
-    client.messages.create.side_effect = msgs
+        a = MagicMock()
+        a.content = [MagicMock(text=text)]
+        anthropic_msgs.append(a)
+        g = MagicMock()
+        g.text = text
+        gemini_msgs.append(g)
+    client.messages.create.side_effect = anthropic_msgs
+    client.models.generate_content.side_effect = gemini_msgs
     return client
 
 
@@ -268,10 +278,12 @@ class TestResolveL5Offline:
         # No LLM call should occur — pass a client that would fail if called.
         failing_client = MagicMock()
         failing_client.messages.create.side_effect = AssertionError("LLM must not be called")
+        failing_client.models.generate_content.side_effect = AssertionError("LLM must not be called")
         result = resolve_l5(record, DEFAULT_SETTINGS, client=failing_client)
         assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT
         assert result.resolution_score is None
         failing_client.messages.create.assert_not_called()
+        failing_client.models.generate_content.assert_not_called()
 
     def test_insufficient_context_after_two_json_failures(self) -> None:
         record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
@@ -386,6 +398,88 @@ def test_fixture_item_offline(fixture: dict[str, Any]) -> None:
     assert result.resolution_status == expected, (
         f"Fixture {fixture['id']}: expected {expected}, got {result.resolution_status}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Backend routing — confirm only the active backend's client interface is hit
+# ---------------------------------------------------------------------------
+
+def _qa_record_for_routing() -> AnalysisRecord:
+    record = AnalysisRecord(item_id="routing-test", text="Why don't skeletons fight? They have no guts.", target_ages=[8])
+    record.l1_result = L1Result(genre=Genre.QA_RIDDLE, tokens=[], lemmas=[], pos_tags=[])
+    record.l4_result = L4Result(
+        sense_a="courage",
+        sense_a_anchor_quote="no guts",
+        sense_b="internal organs",
+        sense_b_anchor_quote="no guts",
+        anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
+        anchoring_status=AnchoringStatus.PASS,
+    )
+    return record
+
+
+def test_anthropic_backend_calls_messages_create_not_gemini() -> None:
+    settings = Settings(L5_BACKEND="anthropic")
+    payload = json.dumps({k: 0.9 for k in settings.L5_QA_WEIGHTS})
+    client = _mock_client([payload])
+    resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+    client.messages.create.assert_called_once()
+    client.models.generate_content.assert_not_called()
+
+
+def test_gemini_backend_calls_generate_content_not_anthropic() -> None:
+    settings = Settings(L5_BACKEND="gemini")
+    payload = json.dumps({k: 0.9 for k in settings.L5_QA_WEIGHTS})
+    client = _mock_client([payload])
+    resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+    client.models.generate_content.assert_called_once()
+    client.messages.create.assert_not_called()
+
+
+def test_invalid_backend_rejected_at_config_load() -> None:
+    with pytest.raises(Exception):  # pydantic ValidationError
+        Settings(L5_BACKEND="openai")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Gemini 429 handling
+# ---------------------------------------------------------------------------
+
+def _make_retry_delay_error(delay_str: str = "30s") -> GeminiClientError:
+    return GeminiClientError(
+        429,
+        {"error": {"message": "rate limit exceeded", "details": [{"retryDelay": delay_str}]}},
+    )
+
+
+def _make_spend_cap_error() -> GeminiClientError:
+    return GeminiClientError(429, {"error": {"message": "limit: 0 spend cap exceeded"}})
+
+
+def test_gemini_generate_waits_and_retries_on_retry_delay() -> None:
+    client = MagicMock()
+    ok = MagicMock()
+    ok.text = '{"polarity_or_direction": 0.9}'
+    client.models.generate_content.side_effect = [_make_retry_delay_error("30s"), ok]
+
+    with patch("doubletake.l5_resolution.time.sleep") as mock_sleep:
+        result = _gemini_generate(client, "gemini-3.6-flash", "prompt", MagicMock())
+
+    assert result is ok
+    mock_sleep.assert_called_once_with(30.0)
+    assert client.models.generate_content.call_count == 2
+
+
+def test_gemini_generate_fails_immediately_on_spend_cap() -> None:
+    client = MagicMock()
+    client.models.generate_content.side_effect = _make_spend_cap_error()
+
+    with patch("doubletake.l5_resolution.time.sleep") as mock_sleep:
+        with pytest.raises(RuntimeError, match="spend cap"):
+            _gemini_generate(client, "gemini-3.6-flash", "prompt", MagicMock())
+
+    mock_sleep.assert_not_called()
+    assert client.models.generate_content.call_count == 1
 
 
 # ---------------------------------------------------------------------------

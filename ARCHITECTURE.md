@@ -124,6 +124,30 @@ L4 correctly reports `sense_a_anchor_quote == sense_b_anchor_quote` for resegmen
 
 ---
 
+---
+
+## 7. L5 backend choice (Decision 3)
+
+### Why Gemini, not Anthropic, is the default
+
+`L5_BACKEND = "gemini"` and `L5_MODEL_GEMINI = "gemini-3.6-flash"` in `Settings`.
+
+**Schema-constrained JSON output.** Gemini's `response_schema` parameter (via `GenerateContentConfig`) enforces the exact JSON structure at the API level.  The LLM cannot omit a subscore field or add unexpected keys; the API returns an error instead.  The Anthropic path relies on prompt engineering and post-hoc field validation with a retry loop — schema enforcement eliminates an entire class of retry-needed failures.
+
+**Temperature=0 is supported.** `GenerateContentConfig(temperature=0.0)` is accepted.  Anthropic claude-4.7+ models reject non-default temperature/top_p/top_k with a 400 error, so the Anthropic path must absorb run-to-run score variance as a measurement cost.  Temperature=0 makes Gemini runs deterministic for the same input, which matters for calibration stability.
+
+**Smoke-test polarity on S1/S2 (Decision 3 validation).** S1 ("Why don't skeletons fight? Because they have no guts.") should score `polarity_or_direction ≈ 1.0` (question premise and punchline align as expected). S2 ("Why do skeletons fight? Because they have no guts.") should score `polarity_or_direction ≈ 0.0` (punchline contradicts premise).  A passing model gives S1 ≥ 0.6 (RESOLUTION_PASS) and S2 < 0.6 (RESOLUTION_FAIL).  These are items `S1`/`S2` in `tests/fixtures/l5_anchors.jsonl`.
+
+**Cost.** Gemini 2.5 Flash / 3.6 Flash is significantly cheaper per token than Claude Sonnet for the same structured-output task.
+
+**Data-use warning.** Free-tier Gemini API requests may be used to improve Google's models.  For production or sensitive content, use a paid tier (`x-goog-user-project` billing, which opts out of training use).  This is a runtime concern, not a code concern; no change to `l5_resolution.py` is needed.
+
+### Switching backends
+
+Change `L5_BACKEND = "anthropic"` in `Settings` (or override in tests).  The `_complete_json` dispatcher routes to `_call_llm` (Anthropic) or `_call_gemini` (Gemini).  All offline tests mock both `client.messages.create` and `client.models.generate_content` so they pass regardless of which backend is active.
+
+---
+
 ### Deviation 2 — L5_RESOLUTION_THRESHOLD added (not named in README)
 
 **README says:** *the weighted resolution score formula, but no pass/fail threshold.*
