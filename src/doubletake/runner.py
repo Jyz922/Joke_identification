@@ -96,7 +96,7 @@ def _l0_post_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord
     evidence = LayerEvidence(
         has_homograph=(
             record.l4_result is not None
-            and record.l4_result.anchoring_status == "PASS"
+            and record.l4_result.anchoring_status == AnchoringStatus.PASS
         ),
         has_compound_split=False,
         is_homophone=False,
