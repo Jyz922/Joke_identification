@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-22 by daren-l5 resilience + calibration session
+Last updated: 2026-09-23 by daren-l5 anchor-span fix session
 
 ---
 
@@ -9,8 +9,8 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline test suite | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 10 deselected** |
-| Offline only | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 10 deselected** |
+| Offline test suite | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 1 failed (X1 validation — intentional), 10 deselected** |
+| Offline only | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 1 failed (X1 — intentional), 10 deselected** |
 | Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
 | API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
 | L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
@@ -52,7 +52,7 @@ All items below were confirmed by commands run in this session.
 | L2 | **stub** | none | `run_l2` raises NotImplementedError |
 | L3 | **stub** | none | `run_l3` raises NotImplementedError |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (offline: 119 passed; live: 10 tests, skip without key) | Gemini backend (default); 5xx retry + model fallback chain added (Task 1); resumable calibration script added (Task 2); live calibration NOT RUN — free-tier RPD quota exhausted |
+| L5 | **done** | yes (offline: 119 passed, 1 intentional fail; live: 10 tests, skip without key) | Gemini backend (default); 5xx retry + model fallback chain; resumable calibration; anchor-span short-circuit guard added; QA and dialogue branches UNVERIFIED end-to-end (live) |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -105,6 +105,17 @@ All items below were confirmed by commands run in this session.
 - `config.py:6–9` documents the deviation (target-age familiarity removed from L3 scoring)
 - `ARCHITECTURE.md §4 Deviation 1` documents it with rationale
 - No action needed
+
+**n. X1 is a structurally invalid fixture — validation test failing intentionally**
+- `tests/fixtures/l5_anchors.jsonl` item X1: `sense_a_anchor_quote == sense_b_anchor_quote == "trunk"` but `anchor_relation = "separate_contexts"` (not resegmentation)
+- X1's punchline "Because they are large grey mammals" provides no context supporting the container sense of "trunk" — X1 fails at L4 (L4 should have set `anchoring_status != PASS`), not L5
+- X1 cannot serve as an L5 relevance negative; the validation test `test_fixture_anchor_quotes_are_substrings_and_distinct` deliberately fails on X1 to flag this
+- Proposed replacements (BOTH senses anchor to distinct spans, punchline still fails to resolve):
+  1. "Why do elephants have a trunk? Because nature forgot to give them pockets." — sense_a: `"elephants"`, sense_b: `"pockets"`
+  2. "Why do elephants have a trunk? Because their suitcase handles kept falling off." — sense_a: `"elephants"`, sense_b: `"suitcase"`
+  3. "Why do elephants have a trunk? Because there is no room for carry-on baggage in a herd." — sense_a: `"elephants"`, sense_b: `"carry-on baggage"`
+- Severity: **blocking** — the validation test failure makes CI red; must replace X1 before calibration runs
+- Awaiting owner approval on replacement
 
 ### Additional findings
 
@@ -160,13 +171,19 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-**Task 3 NOT DONE — calibration blocked on free-tier RPD quota.**
+**Immediate: resolve X1 (issue n) before calibration.**
 
-The Gemini free-tier daily quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20 req/day for `gemini-3.6-flash`) was exhausted by live pytest runs in the previous session. The calibration run made ~19 API calls, all of which returned 429 (no data written, except N1 run=0 which returned INSUFFICIENT_CONTEXT with no LLM call because L4 anchoring failed — no quota consumed).
+X1 is an invalid fixture — validation test is intentionally red until it is replaced. Proposed replacements are in issue n; awaiting owner approval. Once approved, replace X1 and rerun the offline suite to confirm the validation test goes green.
+
+**Then: calibration (still blocked on quota).**
+
+The Gemini free-tier daily quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20 req/day for `gemini-3.6-flash`) was exhausted in the previous session. The calibration run made ~19 API calls, all of which returned 429.
 
 Steps when quota resets (midnight Pacific):
 1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available
 2. `py -3.11 scripts/run_l5_calibration.py --resume` — picks up where it left off (1 row already in JSONL for N1 run=0)
+
+Note: the previous "2 passing live tests" (A1, P2) were the ONLY fixtures that don't trigger the new same-span short-circuit or the anchoring_status short-circuit. L5's QA and dialogue branches have NEVER been exercised against the live model. The first real calibration run will be the first live exercise of those branches.
 
 After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
 
@@ -215,6 +232,21 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
   - L5_BACKEND typed as Literal["gemini", "anthropic"]; dispatcher raises ValueError on unknown backend; one test confirms invalid value rejected at config load
 - Suite state: 110 passed, 10 deselected (live tests skip without GEMINI_API_KEY)
 - Live calibration NOT run — requires GEMINI_API_KEY
+
+### 2026-09-23 — Anchor-span fix session (daren-l5)
+
+**Root cause identified:** All 8 non-resegmentation PASS-status fixtures had `sense_a_anchor_quote == sense_b_anchor_quote` (the ambiguous term itself in both fields) instead of distinct context spans. Per ARCHITECTURE.md Decision 2, identical anchor spans are only legal for `resegmentation`. The previous live-test "passes" for A1 and P2 were the only two fixtures that didn't trigger this structural bug; L5's QA and dialogue branches have NEVER been exercised against a live model.
+
+**Changes this session:**
+
+- `ARCHITECTURE.md`: Added "Anchor-quote definition" subsection to Decision 2, clarifying that anchor quotes are context spans activating each sense, not the ambiguous term itself.
+- `src/doubletake/schema.py`: Added docstring to `L4Result` explaining the context-span requirement and the resegmentation exception.
+- `tests/fixtures/l5_anchors.jsonl`: Fixed context spans for S1, S2, E1, D1, P1, P3. D1 text also updated to include the required context phrases. A1, P2, N1 unchanged. X1 unchanged (awaiting owner approval on replacement — see issue n).
+- `src/doubletake/l5_resolution.py`: Added `WARNING` log to the existing `anchoring_status != PASS` short-circuit; added new short-circuit guard for identical anchor spans where `anchor_relation != RESEGMENTATION`, with `WARNING` log naming the item and reason.
+- `tests/test_l5.py`: Updated `_qa_l4()`, `_dialogue_l4()`, `_qa_record_for_routing()` to use distinct anchor spans; updated `test_fixture_item_offline` to handle the new short-circuit case; added `test_fixture_anchor_quotes_are_substrings_and_distinct` validation test (offline, no LLM, fails intentionally for X1).
+- `tests/test_l5_missing_subscores.py`: Updated `_qa_record()` to use distinct anchor spans.
+
+**Suite state (VERIFIED this session):** 119 passed, **1 failed** (`test_fixture_anchor_quotes_are_substrings_and_distinct` on X1 — intentional), 10 deselected.
 
 ### 2026-09-22 — Resilience + calibration session (daren-l5)
 
