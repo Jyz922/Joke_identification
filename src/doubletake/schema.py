@@ -84,6 +84,15 @@ class L3Result(BaseModel):
 
 
 class L4Result(BaseModel):
+    """L4 anchoring result.
+
+    sense_a_anchor_quote and sense_b_anchor_quote are CONTEXT SPANS: exact
+    substrings of the item text that establish each sense of the ambiguous term,
+    not the ambiguous term itself.  They must be distinct unless
+    anchor_relation is RESEGMENTATION (compound-split: both senses anchor to
+    the compound word, so identical spans are correct and expected).
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     sense_a: str

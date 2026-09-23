@@ -110,6 +110,15 @@ Every field in the instantiated branch is present and non-null.  Absent fields a
 
 ## 6. L5 definitional branch: same-span anchor acceptance (Decision 2)
 
+### Anchor-quote definition
+
+`sense_a_anchor_quote` and `sense_b_anchor_quote` in `L4Result` are **context spans** — exact substrings of the item text that activate each sense of the ambiguous term, not the ambiguous term itself.
+
+- **Correct:** for *"Why do cows wear bells? Because their horns don't work,"* the animal-horn sense is anchored by `"cows"` (establishing livestock context) and the vehicle-horn sense by `"don't work"` (establishing device-failure context).
+- **Wrong:** using `"horns"` for both — that is the ambiguous term, not a context span.
+
+When both senses of a resegmentation (compound-split) item anchor to the same surface token — the compound word itself — `sense_a_anchor_quote == sense_b_anchor_quote` is correct and expected.  Every other case of identical anchor quotes indicates that L4 returned the ambiguous term in both fields instead of identifying distinct context spans.  L5 detects this and short-circuits to `INSUFFICIENT_CONTEXT` with a `WARNING` log rather than making an LLM call with ambiguous anchor evidence.
+
 ### The problem
 
 For compound-split jokes (e.g. *Autobiography: when your car starts telling you about its life*), both senses anchor to the same surface token — the compound word itself.  L4 therefore sets `sense_a_anchor_quote == sense_b_anchor_quote`.  A naïve L5 implementation that rejects same-span anchors as "unresolved" would fail every compound-split item.

@@ -18,7 +18,7 @@ from google.genai.errors import ServerError as _GeminiServerError
 from pydantic import BaseModel, ConfigDict
 
 from .config import Settings
-from .enums import AnchoringStatus, Genre, ResolutionStatus
+from .enums import AnchorRelation, AnchoringStatus, Genre, ResolutionStatus
 from .schema import (
     AnalysisRecord,
     L5DefinitionalResult,
@@ -425,6 +425,19 @@ def resolve_l5(
     l4 = record.l4_result
 
     if l4.anchoring_status != AnchoringStatus.PASS:
+        _LOG.warning(
+            "L5 short-circuit: %s — anchoring_status=%s, no LLM call",
+            record.item_id, l4.anchoring_status,
+        )
+        return _make_insufficient(genre)
+
+    if (l4.sense_a_anchor_quote == l4.sense_b_anchor_quote
+            and l4.anchor_relation != AnchorRelation.RESEGMENTATION):
+        _LOG.warning(
+            "L5 short-circuit: %s — identical anchor spans %r but anchor_relation=%s"
+            " (RESEGMENTATION required for same-span anchors), no LLM call",
+            record.item_id, l4.sense_a_anchor_quote, l4.anchor_relation,
+        )
         return _make_insufficient(genre)
 
     term = ambiguous_term

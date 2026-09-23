@@ -186,7 +186,7 @@ class TestResolveL5Offline:
             sense_a="courage",
             sense_a_anchor_quote="no guts",
             sense_b="internal organs",
-            sense_b_anchor_quote="no guts",
+            sense_b_anchor_quote="skeletons",
             anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
             anchoring_status=AnchoringStatus.PASS,
         )
@@ -206,7 +206,7 @@ class TestResolveL5Offline:
             sense_a="compose oneself emotionally",
             sense_a_anchor_quote="Pull yourself together",
             sense_b="physically close curtains by pulling",
-            sense_b_anchor_quote="Pull yourself together",
+            sense_b_anchor_quote="pair of curtains",
             anchor_relation=AnchorRelation.SPEAKER_MISMATCH,
             anchoring_status=AnchoringStatus.PASS,
         )
@@ -379,6 +379,18 @@ def test_fixture_item_offline(fixture: dict[str, Any]) -> None:
         assert result.resolution_status == expected
         return
 
+    # Same-span anchors with wrong relation also short-circuit (no LLM call).
+    if (l4.sense_a_anchor_quote == l4.sense_b_anchor_quote
+            and l4.anchor_relation != AnchorRelation.RESEGMENTATION):
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS, ambiguous_term=fixture["ambiguous_term"]
+        )
+        assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT, (
+            f"Fixture {fixture['id']}: expected INSUFFICIENT_CONTEXT from "
+            "same-span short-circuit"
+        )
+        return
+
     if expected == ResolutionStatus.RESOLUTION_PASS:
         score_val = 0.9
     else:
@@ -413,7 +425,7 @@ def _qa_record_for_routing() -> AnalysisRecord:
         sense_a="courage",
         sense_a_anchor_quote="no guts",
         sense_b="internal organs",
-        sense_b_anchor_quote="no guts",
+        sense_b_anchor_quote="skeletons",
         anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
         anchoring_status=AnchoringStatus.PASS,
     )
@@ -593,3 +605,38 @@ def test_fixture_item_live(fixture: dict[str, Any]) -> None:
         assert isinstance(result.resolution_score, float)
         assert 0.0 <= result.resolution_score <= 1.0
     assert isinstance(result.subscores, dict)
+
+
+# ---------------------------------------------------------------------------
+# Fixture structural validation — offline, no LLM, must pass before any live run
+# ---------------------------------------------------------------------------
+
+def test_fixture_anchor_quotes_are_substrings_and_distinct() -> None:
+    """For every PASS-status fixture:
+    - both anchor quotes must be substrings of the item text (case-insensitive
+      to handle sentence-start capitalisation differences)
+    - identical anchor quotes iff anchor_relation == 'resegmentation'
+
+    Failing this test in CI is correct and expected for any unfixed fixture.
+    It replaces the previous failure mode of silently burning API quota.
+    """
+    failures: list[str] = []
+    for item in _load_fixtures():
+        l4 = item["l4_result"]
+        if l4["anchoring_status"] != "PASS":
+            continue
+        text_lower = item["text"].lower()
+        item_id = item["id"]
+        a = l4["sense_a_anchor_quote"]
+        b = l4["sense_b_anchor_quote"]
+        if a.lower() not in text_lower:
+            failures.append(f"{item_id}: sense_a_anchor_quote {a!r} not in text")
+        if b.lower() not in text_lower:
+            failures.append(f"{item_id}: sense_b_anchor_quote {b!r} not in text")
+        is_reseg = l4.get("anchor_relation") == "resegmentation"
+        if (a == b) != is_reseg:
+            failures.append(
+                f"{item_id}: identical={a == b} but resegmentation={is_reseg}"
+                f" — identical spans require anchor_relation='resegmentation'"
+            )
+    assert not failures, "Fixture anchor-quote violations:\n" + "\n".join(failures)
