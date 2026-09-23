@@ -1,0 +1,1 @@
+{"id":"X1","text":"Why do elephants have a trunk? Because they are large grey mammals.","genre":"QA_RIDDLE","ambiguous_term":"trunk","expected_anchoring_status":"ONE_SENSE_ONLY","note":"Punchline 'large grey mammals' activates only the proboscis sense; there is no span supporting the container/luggage sense. L4 should not return PASS."}
