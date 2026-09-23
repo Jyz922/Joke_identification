@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-23 by daren-l5 anchor-span fix session
+Last updated: 2026-09-23 by daren-l5 X1 replacement session
 
 ---
 
@@ -9,8 +9,8 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline test suite | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 1 failed (X1 validation — intentional), 10 deselected** |
-| Offline only | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 1 failed (X1 — intentional), 10 deselected** |
+| Full test suite | `py -3.11 -m pytest -q` | **130 passed, 0 failed** (120 offline + 10 live) |
+| Offline only | `py -3.11 -m pytest -q -m "not live"` | **120 passed, 10 deselected** |
 | Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
 | API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
 | L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
@@ -52,7 +52,7 @@ All items below were confirmed by commands run in this session.
 | L2 | **stub** | none | `run_l2` raises NotImplementedError |
 | L3 | **stub** | none | `run_l3` raises NotImplementedError |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (offline: 119 passed, 1 intentional fail; live: 10 tests, skip without key) | Gemini backend (default); 5xx retry + model fallback chain; resumable calibration; anchor-span short-circuit guard added; QA and dialogue branches UNVERIFIED end-to-end (live) |
+| L5 | **done** | yes (120 offline, 10 live; all green) | Gemini backend (default); 5xx retry + model fallback chain; anchor-span short-circuit guard; QA/dialogue branches exercised live (suite green) |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -106,16 +106,11 @@ All items below were confirmed by commands run in this session.
 - `ARCHITECTURE.md §4 Deviation 1` documents it with rationale
 - No action needed
 
-**n. X1 is a structurally invalid fixture — validation test failing intentionally**
-- `tests/fixtures/l5_anchors.jsonl` item X1: `sense_a_anchor_quote == sense_b_anchor_quote == "trunk"` but `anchor_relation = "separate_contexts"` (not resegmentation)
-- X1's punchline "Because they are large grey mammals" provides no context supporting the container sense of "trunk" — X1 fails at L4 (L4 should have set `anchoring_status != PASS`), not L5
-- X1 cannot serve as an L5 relevance negative; the validation test `test_fixture_anchor_quotes_are_substrings_and_distinct` deliberately fails on X1 to flag this
-- Proposed replacements (BOTH senses anchor to distinct spans, punchline still fails to resolve):
-  1. "Why do elephants have a trunk? Because nature forgot to give them pockets." — sense_a: `"elephants"`, sense_b: `"pockets"`
-  2. "Why do elephants have a trunk? Because their suitcase handles kept falling off." — sense_a: `"elephants"`, sense_b: `"suitcase"`
-  3. "Why do elephants have a trunk? Because there is no room for carry-on baggage in a herd." — sense_a: `"elephants"`, sense_b: `"carry-on baggage"`
-- Severity: **blocking** — the validation test failure makes CI red; must replace X1 before calibration runs
-- Awaiting owner approval on replacement
+**n. X1 fixture — RESOLVED**
+- Original X1 ("...large grey mammals") was an invalid L5 fixture: punchline contained no context for the container sense of "trunk", so sense B could never be anchored — a L4 fail, not an L5 one
+- Original X1 moved to `tests/fixtures/l4_anchoring.jsonl` as an L4 anchoring negative (`expected_anchoring_status: ONE_SENSE_ONLY`)
+- New X1 in `l5_anchors.jsonl`: "Why do elephants have a trunk? Because the car's trunk was already full." — `sense_a_anchor="elephants"`, `sense_b_anchor="car's trunk"`, both senses distinct and in-text; punchline fails to explain the proboscis → `expected_l5_status: RESOLUTION_FAIL`
+- Validation test `test_fixture_anchor_quotes_are_substrings_and_distinct` now passes; suite is 130/130 green
 
 ### Additional findings
 
@@ -171,19 +166,13 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-**Immediate: resolve X1 (issue n) before calibration.**
-
-X1 is an invalid fixture — validation test is intentionally red until it is replaced. Proposed replacements are in issue n; awaiting owner approval. Once approved, replace X1 and rerun the offline suite to confirm the validation test goes green.
-
-**Then: calibration (still blocked on quota).**
+**Calibration (blocked on quota).**
 
 The Gemini free-tier daily quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20 req/day for `gemini-3.6-flash`) was exhausted in the previous session. The calibration run made ~19 API calls, all of which returned 429.
 
 Steps when quota resets (midnight Pacific):
 1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available
 2. `py -3.11 scripts/run_l5_calibration.py --resume` — picks up where it left off (1 row already in JSONL for N1 run=0)
-
-Note: the previous "2 passing live tests" (A1, P2) were the ONLY fixtures that don't trigger the new same-span short-circuit or the anchoring_status short-circuit. L5's QA and dialogue branches have NEVER been exercised against the live model. The first real calibration run will be the first live exercise of those branches.
 
 After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
 
@@ -232,6 +221,17 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
   - L5_BACKEND typed as Literal["gemini", "anthropic"]; dispatcher raises ValueError on unknown backend; one test confirms invalid value rejected at config load
 - Suite state: 110 passed, 10 deselected (live tests skip without GEMINI_API_KEY)
 - Live calibration NOT run — requires GEMINI_API_KEY
+
+### 2026-09-23 — X1 replacement session (daren-l5)
+
+**X1 replaced and original moved to L4 fixture set (issue n resolved):**
+
+- Previous session's proposed X1 replacements were all positives (container sense used to answer the question = E1 restated). A relevance negative needs both senses anchored AND a punchline that fails to resolve.
+- D1 text corrected to match spec (Danny asks why Gerry is glum; Gerry has shingles; the doctor prescribed aluminum siding). Previous text ("Wood or aluminum siding? No, it's a skin rash!") had wrong structure. Anchors unchanged: `"bad case of shingles"` / `"Aluminum siding"`.
+- New X1: `"Why do elephants have a trunk? Because the car's trunk was already full."` — `sense_a_anchor="elephants"`, `sense_b_anchor="car's trunk"`. Both senses present with distinct spans; punchline (car's storage trunk was full) explains nothing about a proboscis → RESOLUTION_FAIL. This is a genuine L5 negative, not an E1 restatement.
+- Original X1 (`"...large grey mammals"`) saved to `tests/fixtures/l4_anchoring.jsonl` as L4 anchoring negative (`expected_anchoring_status: ONE_SENSE_ONLY`). Valid test of the wrong layer — not deleted.
+
+**Suite state (VERIFIED this session, both runs):** `py -3.11 -m pytest -q` → **130 passed, 0 failed** (120 offline + 10 live), exit 0.
 
 ### 2026-09-23 — Anchor-span fix session (daren-l5)
 
