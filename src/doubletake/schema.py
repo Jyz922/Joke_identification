@@ -143,7 +143,7 @@ class L5DefinitionalResult(BaseModel):
 
 
 class L5DialogueResult(BaseModel):
-    """Resolution result for DIALOGUE_MISUNDERSTANDING and DECLARATIVE jokes.
+    """Resolution result for DIALOGUE_MISUNDERSTANDING jokes.
 
     Subscores: misunderstanding_plausible, contrast_clear, speaker_intention_clear.
     resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
@@ -151,7 +151,26 @@ class L5DialogueResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    genre: Literal[Genre.DIALOGUE_MISUNDERSTANDING, Genre.DECLARATIVE]
+    genre: Literal[Genre.DIALOGUE_MISUNDERSTANDING]
+    resolution_status: ResolutionStatus
+    resolution_score: Optional[float] = None
+    subscores: dict[str, float]
+    model_used: str = ""
+    fallback_used: bool = False
+    retries: int = 0
+
+
+class L5DeclarativeResult(BaseModel):
+    """Resolution result for DECLARATIVE one-liners.
+
+    Subscores: both_readings_available, punchline_sense_is_unexpected,
+    incongruity_present.
+    resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    genre: Literal[Genre.DECLARATIVE]
     resolution_status: ResolutionStatus
     resolution_score: Optional[float] = None
     subscores: dict[str, float]
@@ -161,7 +180,7 @@ class L5DialogueResult(BaseModel):
 
 
 L5Result = Annotated[
-    Union[L5QAResult, L5DefinitionalResult, L5DialogueResult],
+    Union[L5QAResult, L5DefinitionalResult, L5DialogueResult, L5DeclarativeResult],
     Field(discriminator="genre"),
 ]
 

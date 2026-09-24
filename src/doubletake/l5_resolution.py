@@ -21,6 +21,7 @@ from .config import Settings
 from .enums import AnchorRelation, AnchoringStatus, Genre, ResolutionStatus
 from .schema import (
     AnalysisRecord,
+    L5DeclarativeResult,
     L5DefinitionalResult,
     L5DialogueResult,
     L5QAResult,
@@ -49,12 +50,19 @@ _L5_DIALOGUE_WEIGHTS: dict[str, float] = {
     "contrast_clear": 0.35,
     "speaker_intention_clear": 0.25,
 }
+# Modelled on the definitional branch (punchline-sense term weighted highest).
+# UNVALIDATED: no declarative fixture has been run live yet.
+_L5_DECLARATIVE_WEIGHTS: dict[str, float] = {
+    "both_readings_available": 0.30,
+    "punchline_sense_is_unexpected": 0.40,
+    "incongruity_present": 0.30,
+}
 
 _GENRE_TO_PROMPT: dict[Genre, str] = {
     Genre.QA_RIDDLE: "l5_qa.md",
     Genre.DEFINITIONAL_ONELINER: "l5_definitional.md",
     Genre.DIALOGUE_MISUNDERSTANDING: "l5_dialogue.md",
-    Genre.DECLARATIVE: "l5_dialogue.md",
+    Genre.DECLARATIVE: "l5_declarative.md",
 }
 
 
@@ -85,6 +93,13 @@ class _DialogueLLMResponse(BaseModel):
     misunderstanding_plausible: float
     contrast_clear: float
     speaker_intention_clear: float
+
+
+class _DeclarativeLLMResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    both_readings_available: float
+    punchline_sense_is_unexpected: float
+    incongruity_present: float
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +187,13 @@ def _empty_result(
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
+            resolution_status=status,
+            subscores=empty,
+            **kw,
+        )
+    if genre == Genre.DECLARATIVE:
+        return L5DeclarativeResult(
+            genre=Genre.DECLARATIVE,
             resolution_status=status,
             subscores=empty,
             **kw,
@@ -519,6 +541,9 @@ def resolve_l5(
     elif genre == Genre.DEFINITIONAL_ONELINER:
         weights = _L5_DEFINITIONAL_WEIGHTS
         response_model = _DefinitionalLLMResponse
+    elif genre == Genre.DECLARATIVE:
+        weights = _L5_DECLARATIVE_WEIGHTS
+        response_model = _DeclarativeLLMResponse
     else:
         weights = _L5_DIALOGUE_WEIGHTS
         response_model = _DialogueLLMResponse
@@ -570,6 +595,12 @@ def resolve_l5(
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
+            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
+            **kw,
+        )
+    if genre == Genre.DECLARATIVE:
+        return L5DeclarativeResult(
+            genre=Genre.DECLARATIVE,
             resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
             **kw,
         )

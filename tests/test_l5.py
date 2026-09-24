@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from doubletake.config import DEFAULT_SETTINGS, Settings
 from doubletake.enums import AnchorRelation, AnchoringStatus, Genre, ResolutionStatus
 from doubletake.l5_resolution import (
+    _L5_DECLARATIVE_WEIGHTS,
     _L5_DEFINITIONAL_WEIGHTS,
     _L5_DIALOGUE_WEIGHTS,
     _gemini_generate,
@@ -26,6 +27,7 @@ from doubletake.schema import (
     AnalysisRecord,
     L1Result,
     L4Result,
+    L5DeclarativeResult,
     L5DefinitionalResult,
     L5DialogueResult,
     L5QAResult,
@@ -130,14 +132,23 @@ class TestL5Schema:
         )
         assert r.genre == Genre.DIALOGUE_MISUNDERSTANDING
 
-    def test_dialogue_result_for_declarative_genre(self) -> None:
-        r = L5DialogueResult(
+    def test_declarative_result_construction(self) -> None:
+        r = L5DeclarativeResult(
             genre=Genre.DECLARATIVE,
             resolution_status=ResolutionStatus.RESOLUTION_FAIL,
             resolution_score=0.30,
-            subscores={},
+            subscores={"both_readings_available": 0.3,
+                       "punchline_sense_is_unexpected": 0.3, "incongruity_present": 0.3},
         )
         assert r.genre == Genre.DECLARATIVE
+
+    def test_dialogue_result_rejects_declarative_genre(self) -> None:
+        with pytest.raises(ValidationError):
+            L5DialogueResult(
+                genre=Genre.DECLARATIVE,
+                resolution_status=ResolutionStatus.RESOLUTION_FAIL,
+                subscores={},
+            )
 
     def test_frozen_qa_result_rejects_mutation(self) -> None:
         r = L5QAResult(
@@ -378,6 +389,27 @@ class TestResolveL5Offline:
         assert isinstance(result, L5DialogueResult)
         assert abs(result.resolution_score - 1.0) < 1e-4
 
+    def test_declarative_score_uses_correct_weights(self) -> None:
+        l4 = L4Result(
+            sense_a="a fishing net",
+            sense_a_anchor_quote="fishermen",
+            sense_b="net as in net financial result",
+            sense_b_anchor_quote="calculating the net loss",
+            anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
+            anchoring_status=AnchoringStatus.PASS,
+        )
+        record = _make_record(
+            "The fishermen are calculating the net loss.", Genre.DECLARATIVE, l4
+        )
+        payload = json.dumps({k: 1.0 for k in _L5_DECLARATIVE_WEIGHTS} | {"reasoning": "all max"})
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS,
+            ambiguous_term="net", client=_mock_client([payload]),
+        )
+        assert isinstance(result, L5DeclarativeResult)
+        assert set(result.subscores) == set(_L5_DECLARATIVE_WEIGHTS)
+        assert abs(result.resolution_score - 1.0) < 1e-4
+
 
 # ---------------------------------------------------------------------------
 # Parameterised offline test against all six fixture items
@@ -423,6 +455,8 @@ def test_fixture_item_offline(fixture: dict[str, Any]) -> None:
         keys = list(DEFAULT_SETTINGS.L5_QA_WEIGHTS.keys())
     elif genre == Genre.DEFINITIONAL_ONELINER:
         keys = list(_L5_DEFINITIONAL_WEIGHTS.keys())
+    elif genre == Genre.DECLARATIVE:
+        keys = list(_L5_DECLARATIVE_WEIGHTS.keys())
     else:
         keys = list(_L5_DIALOGUE_WEIGHTS.keys())
 
