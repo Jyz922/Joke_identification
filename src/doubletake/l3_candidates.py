@@ -15,6 +15,11 @@ non-contrastive one.
 
 Compound splits (source "wordnet_split:a+b"): contrast = a part's top lexname
 differs from the whole word's; balance is between the two parts' top counts.
+
+Multiword expressions (source "wordnet_mwe:<lemma>"): the idiomatic reading
+(MWE senses) vs the literal readings of its content words. contrast = some
+word's top lexname differs from the MWE's; balance is between the MWE's top
+count and that word's.
 """
 
 from __future__ import annotations
@@ -73,16 +78,32 @@ def _split(term: str, source: str, whole: list[SenseEntry], parts: list[SenseEnt
     return _entry(term, contrast, c1, c2, split=True)
 
 
+def _mwe(phrase: str, mwe: list[SenseEntry], whole: dict[str, list[SenseEntry]]) -> CandidateEntry | None:
+    words = [whole[w] for w in phrase.split() if w in whole]
+    if not words:
+        return None
+    top = _top(mwe)
+    literal = [_top(ss) for ss in words]
+    contrasting = [t for t in literal if t.lexname != top.lexname]
+    other = _top(contrasting) if contrasting else _top(literal)
+    c1, c2 = sorted((_count(top), _count(other)), reverse=True)
+    return _entry(phrase, bool(contrasting), c1, c2, split=False)
+
+
 def rank(senses: list[SenseEntry], top_k: int) -> L3Result:
     whole: dict[str, list[SenseEntry]] = defaultdict(list)
     splits: dict[tuple[str, str], list[SenseEntry]] = defaultdict(list)
+    mwes: dict[str, list[SenseEntry]] = defaultdict(list)
     for s in senses:
         if s.source == "wordnet":
             whole[s.term].append(s)
+        elif s.source.startswith("wordnet_mwe:"):
+            mwes[s.term].append(s)
         else:
             splits[(s.term, s.source)].append(s)
     cands = [_homograph(t, ss) for t, ss in whole.items()]
     cands += [c for (t, src), ss in splits.items() if (c := _split(t, src, whole[t], ss))]
+    cands += [c for t, ss in mwes.items() if (c := _mwe(t, ss, whole))]
     cands.sort(key=lambda c: (-c.score, c.term))
     # One slot per term: a word can be both a homograph and a split (life ->
     # li + fe); keep its best-scoring reading so top-k holds k distinct terms.

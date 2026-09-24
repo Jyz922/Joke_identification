@@ -34,8 +34,9 @@ def test_gold_term_in_top3(fid: str) -> None:
 @pytest.mark.parametrize("fid", ["P2", "P3"])
 def test_known_unreachable(fid: str) -> None:
     """Pinned limitation. P2: explain ranks 4th (exit/make/plain outrank the
-    ex+plain split). P3: 'pull yourself together' is multiword. If this
-    starts failing, L3 got better: move the id to the list above."""
+    ex+plain split). P3: found as MWE pull_together, but WordNet's only sense
+    is gather.v.01 (the literal reading), and it ranks 8th. If this starts
+    failing, L3 got better: move the id to the list above."""
     assert _FIXTURES[fid]["ambiguous_term"].lower() not in _top3(fid)
 
 
@@ -70,3 +71,9 @@ def test_zero_semcor_senses_still_rank() -> None:
     """shingles: every sense has semcor_count 0; still a contrastive candidate."""
     c = next(c for c in rank(retrieve(["shingles"]), 3).candidates if c.term == "shingles")
     assert c.score_components["contrast"] == 1.0 and c.score_components["top_count"] == 0.0
+
+
+def test_mwe_is_a_candidate() -> None:
+    fx = _FIXTURES["P3"]
+    terms = [c.term for c in rank(retrieve(analyze(fx["text"]).tokens), 99).candidates]
+    assert "pull yourself together" in terms

@@ -61,3 +61,21 @@ def test_run_l2_populates_record_from_l1_tokens() -> None:
     record = run_l2(record, DEFAULT_SETTINGS)
     assert record.l2_result.senses and {s.term for s in record.l2_result.senses} == {"trunk"}
     assert record.trace[-1].layer == "L2"
+
+
+def test_mwe_scan_handles_reflexive_and_inflection() -> None:
+    from doubletake.l2_senses import mwe_spans
+    assert mwe_spans(["Pull", "yourself", "together"]) == [("Pull yourself together", "pull_together")]
+    assert ("going after", "go_after") in mwe_spans(["going", "after", "liquid", "assets"])
+    assert ("liquid assets", "liquid_assets") in mwe_spans(["going", "after", "liquid", "assets"])
+
+
+def test_mwe_scan_skips_function_word_only_grams() -> None:
+    from doubletake.l2_senses import mwe_spans
+    assert mwe_spans(["at", "all"]) == []  # at_all is a WordNet lemma
+
+
+def test_retrieve_tags_mwe_senses() -> None:
+    senses = retrieve(["liquid", "assets"])
+    mwe = [s for s in senses if s.source == "wordnet_mwe:liquid_assets"]
+    assert mwe and {s.term for s in mwe} == {"liquid assets"}

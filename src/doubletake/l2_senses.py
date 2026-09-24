@@ -155,12 +155,51 @@ def compound_splits(word: str, min_part: int = 2) -> list[tuple[str, str]]:
     ]
 
 
+# Closed grammatical class, not an idiom list: WordNet writes reflexive
+# idioms with "oneself" (pull_oneself_together) or without it (pull_together).
+_REFLEXIVES = frozenset(
+    "myself yourself himself herself itself ourselves yourselves themselves oneself".split()
+)
+
+
+def mwe_spans(tokens: list[str], max_n: int = 4) -> list[tuple[str, str]]:
+    """(surface phrase, WordNet lemma name) for each 2-4 token n-gram that is an
+    exact WordNet multiword lemma. Variants tried: first token lemmatized
+    (pulled -> pull); a reflexive pronoun replaced by "oneself" or dropped.
+    ponytail: contiguous n-grams over L1 tokens, so a span can cross a sentence
+    boundary and discontinuous idioms beyond one reflexive are missed."""
+    wn = wordnet()
+    low = [t.lower() for t in tokens]
+    found: dict[str, str] = {}
+    for n in range(2, max_n + 1):
+        for i in range(len(low) - n + 1):
+            gram = low[i:i + n]
+            if all(t in STOPWORDS or t in _REFLEXIVES for t in gram):
+                continue
+            firsts = {gram[0]} | {b for p in "nvar" if (b := wn.morphy(gram[0], p))}
+            for first in firsts:
+                words = [first] + gram[1:]
+                for variant in (
+                    words,
+                    ["oneself" if w in _REFLEXIVES else w for w in words],
+                    [w for w in words if w not in _REFLEXIVES],
+                ):
+                    key = "_".join(variant)
+                    if len(variant) >= 2 and wn.lemmas(key):
+                        found.setdefault(" ".join(tokens[i:i + n]), key)
+    return list(found.items())
+
+
 def retrieve(tokens: list[str]) -> list[SenseEntry]:
-    """Senses for every content token, plus part-senses for compound splits.
+    """Senses for every content token, plus part-senses for compound splits,
+    plus multiword-expression senses.
 
     Split-part senses keep term=<whole word> and source="wordnet_split:<a>+<b>".
+    MWE senses have term=<surface phrase> and source="wordnet_mwe:<lemma>".
     """
     out: list[SenseEntry] = []
+    for phrase, key in mwe_spans(tokens):
+        out += senses_for(key, term=phrase.lower(), source=f"wordnet_mwe:{key}")
     seen: set[str] = set()
     for tok in tokens:
         t = tok.lower()
