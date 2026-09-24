@@ -19,6 +19,7 @@ from __future__ import annotations
 import time
 
 from .config import Settings
+from .l1_surface import analyze
 from .l2_senses import retrieve
 from .l5_resolution import resolve_l5
 from .schema import AnalysisRecord, L2Result, LayerTrace
@@ -26,7 +27,16 @@ from .schema import AnalysisRecord, L2Result, LayerTrace
 
 def run_l1(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
     """L1: Surface analysis and genre routing."""
-    raise NotImplementedError("L1 (surface analysis) is not implemented.")
+    start = time.monotonic()
+    record.l1_result = analyze(record.text)
+    record.trace.append(LayerTrace(
+        layer="L1",
+        status="OK",
+        reason=f"genre={record.l1_result.genre}",
+        duration_ms=round((time.monotonic() - start) * 1000, 3),
+        hints_used=0,
+    ))
+    return record
 
 
 def run_l2(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
