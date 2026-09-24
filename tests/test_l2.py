@@ -12,6 +12,9 @@ from doubletake.l2_senses import aoa_coverage, aoa_lookup, compound_splits, retr
     ("bank", "exact"),
     ("ACE", "lowercase"),          # AoA has only "ace"
     ("accredit", "lemmatized"),    # AoA has only "accredited"
+    ("assets", "lemmatized"),      # query side lemmatized: AoA has only "asset"
+    ("porkchop", "derived_from_parts"),       # compound: max(pork, chop)
+    ("liquid_assets", "derived_from_parts"),  # MWE: max(liquid, asset)
     ("New_York", "miss"),
 ])
 def test_aoa_fallback_stage(lemma: str, stage: str) -> None:
@@ -21,8 +24,14 @@ def test_aoa_fallback_stage(lemma: str, stage: str) -> None:
 
 
 def test_aoa_coverage_is_cumulative() -> None:
-    cov = aoa_coverage(["bank", "ACE", "accredit", "New_York"])
-    assert cov == {"exact": 25.0, "lowercase": 50.0, "lemmatized": 75.0, "miss": 25.0}
+    cov = aoa_coverage(["bank", "ACE", "accredit", "porkchop", "New_York"])
+    assert cov == {"exact": 20.0, "lowercase": 40.0, "lemmatized": 60.0,
+                   "derived_from_parts": 80.0, "miss": 20.0}
+
+
+def test_derived_takes_the_later_learned_part() -> None:
+    parts = [aoa_lookup(p)[0] for p in ("liquid", "assets")]
+    assert aoa_lookup("liquid_assets")[0] == max(parts)
 
 
 def test_senses_carry_lexname_semcor_and_aoa() -> None:

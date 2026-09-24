@@ -15,12 +15,16 @@ reports which stage matched, so a miss is visible downstream (L7), never silent:
   1. exact       lemma with "_" -> " "
   2. lowercase   case-folded ("Monday" vs "monday")
   3. lemmatized  AoA words indexed by their WordNet base form (min AoA wins)
-  4. miss        aoa_estimate=None, aoa_match="miss"
+  4. derived_from_parts  compound or MWE: MAX of its parts' AoA (stages 1-3),
+                 since the later-learned part gates comprehension. MWEs split
+                 on "_"/"-"/" "; single words via compound_splits().
+  5. miss        aoa_estimate=None, aoa_match="miss"
 """
 
 from __future__ import annotations
 
 import csv
+import re
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -33,7 +37,7 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 NLTK_DIR = DATA_DIR / "nltk_data"
 AOA_CSV = DATA_DIR / "aoa_kuperman.csv"
 
-AOA_STAGES = ("exact", "lowercase", "lemmatized", "miss")
+AOA_STAGES = ("exact", "lowercase", "lemmatized", "derived_from_parts", "miss")
 
 # ponytail: hand list of function words; WordNet has senses for "have", "in",
 # "it" etc. that would otherwise flood L3. Swap for a real stoplist if needed.
@@ -62,6 +66,13 @@ def wordnet():
 
 
 @lru_cache(maxsize=1)
+def _lemmatizer():
+    from nltk.stem import WordNetLemmatizer
+    wordnet()  # ensure data path is set before first use
+    return WordNetLemmatizer()
+
+
+@lru_cache(maxsize=1)
 def _aoa_tables() -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
     """(exact, lowercase, lemmatized) AoA indexes built from the Kuperman CSV."""
     if not AOA_CSV.exists():
@@ -87,6 +98,22 @@ def _aoa_tables() -> tuple[dict[str, float], dict[str, float], dict[str, float]]
 
 def aoa_lookup(lemma: str) -> tuple[float | None, str]:
     """AoA for a WordNet lemma name, plus the fallback stage that matched."""
+    aoa, stage = _aoa_direct(lemma)
+    if stage != "miss":
+        return aoa, stage
+    if re.search(r"[_\- ]", lemma):
+        splits = [[p for p in re.split(r"[_\- ]+", lemma) if p]]
+    else:
+        splits = [list(sp) for sp in compound_splits(lemma)]
+    for parts in splits:
+        ages = [_aoa_direct(p)[0] for p in parts]
+        if parts and None not in ages:
+            return max(ages), "derived_from_parts"
+    return None, "miss"
+
+
+def _aoa_direct(lemma: str) -> tuple[float | None, str]:
+    """Stages 1-3 only (no part derivation)."""
     exact, lower, lemmatized = _aoa_tables()
     w = lemma.replace("_", " ")
     if w in exact:
@@ -96,6 +123,13 @@ def aoa_lookup(lemma: str) -> tuple[float | None, str]:
         return lower[lw], "lowercase"
     if lw in lemmatized:
         return lemmatized[lw], "lemmatized"
+    # Query side is a surface form too (MWE parts: "assets" in liquid_assets).
+    # WordNetLemmatizer returns the SHORTEST base; morphy returns "assets"
+    # unchanged because WordNet lists it as its own noun lemma.
+    lem = _lemmatizer()
+    bases = [lower[b] for p in "nvar" if (b := lem.lemmatize(lw, p)) != lw and b in lower]
+    if bases:
+        return min(bases), "lemmatized"
     return None, "miss"
 
 
