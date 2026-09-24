@@ -166,7 +166,7 @@ Change `L5_BACKEND = "anthropic"` in `Settings` (or override in tests).  The `_c
 | Genre | Threshold | Basis |
 |---|---|---|
 | QA_RIDDLE | 0.46 | 5-run calibration: X1 (negative) max 0.417, E1 (positive) min 0.507. Set from per-run ranges, not means — verdicts are per run. |
-| DEFINITIONAL_ONELINER | 0.60 | Positives only (A1, and P2 if its FAIL label is wrong). No validated negative. |
+| DEFINITIONAL_ONELINER | 0.60 | Positives only (A1 0.935; P2 0.865–0.930, relabelled PASS 2026-09-24). No validated negative. |
 | DIALOGUE_MISUNDERSTANDING | 0.60 | Positives only (D1, P3). No validated negative. |
 | DECLARATIVE | 0.60 | **UNVALIDATED** — no declarative item has been scored live. Placeholder until declarative jokes/non-jokes from the annotated corpus are calibrated. |
 

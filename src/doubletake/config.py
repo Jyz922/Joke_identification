@@ -89,7 +89,7 @@ class Settings(BaseModel):
         # 0.59-0.86 > S1 positive's 0.58-0.68): that is sense-labelling
         # (polarity inversion), not threshold.
         Genre.QA_RIDDLE: 0.46,
-        # A1 0.935 stable; P2 0.865-0.930. No validated negative yet.
+        # A1 0.935 stable; P2 0.865-0.930 (both positives). No validated negative yet.
         Genre.DEFINITIONAL_ONELINER: 0.60,
         # D1 0.858-0.927, P3 0.897-0.917. Positives only; no negative yet.
         Genre.DIALOGUE_MISUNDERSTANDING: 0.60,
