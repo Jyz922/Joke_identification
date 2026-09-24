@@ -21,6 +21,7 @@ import time
 from .config import Settings
 from .l1_surface import analyze
 from .l2_senses import retrieve
+from .l3_candidates import rank
 from .l5_resolution import resolve_l5
 from .schema import AnalysisRecord, L2Result, LayerTrace
 
@@ -58,8 +59,19 @@ def run_l2(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 
 def run_l3(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
-    """L3: Candidate ranking (top-k ambiguity sites)."""
-    raise NotImplementedError("L3 (candidate ranking) is not implemented.")
+    """L3: Candidate ranking (top-k ambiguity sites). Age-free."""
+    if record.l2_result is None:
+        raise ValueError("L2 must run before L3: l2_result is None")
+    start = time.monotonic()
+    record.l3_result = rank(record.l2_result.senses, settings.L3_TOP_K)
+    record.trace.append(LayerTrace(
+        layer="L3",
+        status="OK",
+        reason="top=" + ",".join(c.term for c in record.l3_result.candidates),
+        duration_ms=round((time.monotonic() - start) * 1000, 3),
+        hints_used=0,
+    ))
+    return record
 
 
 def run_l4(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
