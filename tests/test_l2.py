@@ -13,6 +13,9 @@ from doubletake.l2_senses import aoa_coverage, aoa_lookup, compound_splits, retr
     ("ACE", "lowercase"),          # AoA has only "ace"
     ("accredit", "lemmatized"),    # AoA has only "accredited"
     ("assets", "lemmatized"),      # query side lemmatized: AoA has only "asset"
+    ("comically", "derived_from_adjective"),  # pertainym comical, not comic + ally
+    ("additionally", "miss"),                 # adverb, no pertainym: never split
+    ("well-nigh", "derived_from_parts"),      # hyphenated adverb still splits on "-"
     ("porkchop", "derived_from_parts"),       # compound: max(pork, chop)
     ("liquid_assets", "derived_from_parts"),  # MWE: max(liquid, asset)
     ("New_York", "miss"),
@@ -24,9 +27,11 @@ def test_aoa_fallback_stage(lemma: str, stage: str) -> None:
 
 
 def test_aoa_coverage_is_cumulative() -> None:
-    cov = aoa_coverage(["bank", "ACE", "accredit", "porkchop", "New_York"])
-    assert cov == {"exact": 20.0, "lowercase": 40.0, "lemmatized": 60.0,
-                   "derived_from_parts": 80.0, "miss": 20.0}
+    cov = aoa_coverage(["bank", "ACE", "accredit", "comically", "porkchop", "New_York"])
+    assert {k: round(v, 1) for k, v in cov.items()} == {
+        "exact": 16.7, "lowercase": 33.3, "lemmatized": 50.0,
+        "derived_from_adjective": 66.7, "derived_from_parts": 83.3, "miss": 16.7,
+    }
 
 
 def test_derived_takes_the_later_learned_part() -> None:
@@ -94,3 +99,7 @@ def test_retrieve_tags_mwe_senses() -> None:
 def test_possessives_reach_l2_with_either_apostrophe(apos: str) -> None:
     terms = {s.term for s in retrieve(["the", f"car{apos}s", "trunk", f"don{apos}t"])}
     assert terms == {"car", "trunk"}
+
+
+def test_adverb_takes_adjective_aoa() -> None:
+    assert aoa_lookup("comically")[0] == aoa_lookup("comical")[0]

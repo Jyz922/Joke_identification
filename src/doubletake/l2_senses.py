@@ -15,10 +15,13 @@ reports which stage matched, so a miss is visible downstream (L7), never silent:
   1. exact       lemma with "_" -> " "
   2. lowercase   case-folded ("Monday" vs "monday")
   3. lemmatized  AoA words indexed by their WordNet base form (min AoA wins)
-  4. derived_from_parts  compound or MWE: MAX of its parts' AoA (stages 1-3),
+  4. derived_from_adjective  WordNet adverb: AoA of its pertainym adjective
+                 (comically -> comical); min if several. Adverbs are never
+                 compound-split (that gave comic + "ally").
+  5. derived_from_parts  compound or MWE: MAX of its parts' AoA (stages 1-3),
                  since the later-learned part gates comprehension. MWEs split
                  on "_"/"-"/" "; single words via compound_splits().
-  5. miss        aoa_estimate=None, aoa_match="miss"
+  6. miss        aoa_estimate=None, aoa_match="miss"
 """
 
 from __future__ import annotations
@@ -37,7 +40,9 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 NLTK_DIR = DATA_DIR / "nltk_data"
 AOA_CSV = DATA_DIR / "aoa_kuperman.csv"
 
-AOA_STAGES = ("exact", "lowercase", "lemmatized", "derived_from_parts", "miss")
+AOA_STAGES = (
+    "exact", "lowercase", "lemmatized", "derived_from_adjective", "derived_from_parts", "miss",
+)
 
 # ponytail: hand list of function words; WordNet has senses for "have", "in",
 # "it" etc. that would otherwise flood L3. Swap for a real stoplist if needed.
@@ -101,6 +106,11 @@ def aoa_lookup(lemma: str) -> tuple[float | None, str]:
     aoa, stage = _aoa_direct(lemma)
     if stage != "miss":
         return aoa, stage
+    adverbs = wordnet().lemmas(lemma.lower(), pos="r")
+    if adverbs and not re.search(r"[_\- ]", lemma):  # well-nigh still splits on "-"
+        adjs = {p.name() for a in adverbs for p in a.pertainyms()}
+        ages = [x for x in (_aoa_direct(j)[0] for j in adjs) if x is not None]
+        return (min(ages), "derived_from_adjective") if ages else (None, "miss")
     if re.search(r"[_\- ]", lemma):
         splits = [[p for p in re.split(r"[_\- ]+", lemma) if p]]
     else:
