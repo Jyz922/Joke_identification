@@ -43,6 +43,10 @@ class SenseEntry(BaseModel):
     sense_frequency: Optional[float] = None
     aoa_estimate: Optional[float] = None
     source: str
+    lexname: Optional[str] = None          # WordNet lexicographer file, e.g. noun.body
+    semcor_count: Optional[int] = None     # WordNet Lemma.count() (SemCor tag count)
+    # Which AoA fallback stage matched: exact | lowercase | lemmatized | miss.
+    aoa_match: Optional[str] = None
 
 
 class CandidateEntry(BaseModel):

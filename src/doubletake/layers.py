@@ -19,8 +19,9 @@ from __future__ import annotations
 import time
 
 from .config import Settings
+from .l2_senses import retrieve
 from .l5_resolution import resolve_l5
-from .schema import AnalysisRecord, LayerTrace
+from .schema import AnalysisRecord, L2Result, LayerTrace
 
 
 def run_l1(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
@@ -30,7 +31,20 @@ def run_l1(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 def run_l2(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
     """L2: Sense retrieval from lexical resources."""
-    raise NotImplementedError("L2 (sense retrieval) is not implemented.")
+    if record.l1_result is None:
+        raise ValueError("L1 must run before L2: l1_result is None")
+    start = time.monotonic()
+    senses = retrieve(record.l1_result.tokens)
+    record.l2_result = L2Result(senses=senses)
+    misses = sum(s.aoa_match == "miss" for s in senses)
+    record.trace.append(LayerTrace(
+        layer="L2",
+        status="OK",
+        reason=f"senses={len(senses)} aoa_miss={misses}",
+        duration_ms=round((time.monotonic() - start) * 1000, 3),
+        hints_used=0,
+    ))
+    return record
 
 
 def run_l3(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:

@@ -173,3 +173,17 @@ Change `L5_BACKEND = "anthropic"` in `Settings` (or override in tests).  The `_c
 No QA threshold separates S1 (positive, 0.58–0.68) from S2 (negative, 0.59–0.86). That inversion comes from how the L4 fixtures label the senses, not from the cut-off.
 
 **Reason:** without a named threshold, every implementation would embed the cut-off as a magic number inside L5 logic, making it invisible and non-tunable.  Per-genre because each branch has a different subscore set, so scores land on different scales (QA 0.27–0.86 vs definitional/dialogue 0.86–0.94 in calibration).
+
+---
+
+## 8. L2 lexical data sources (Decision 4)
+
+**Sources, all deterministic, cached under `data/` (gitignored):**
+
+- **WordNet 3.0** via nltk. It downloads to `data/nltk_data/` the first time it is used. Each sense carries synset id, gloss, POS, `lexname()`.
+- **SemCor tag counts** via WordNet `Lemma.count()`. That is WordNet's cntlist, the per-sense tag frequency from the SemCor semantic concordance. The raw SemCor corpus is not downloaded because nothing needs it.
+- **Age of acquisition:** Kuperman, V., Stadthagen-Gonzalez, H., & Brysbaert, M. (2012). *Age-of-acquisition ratings for 30,000 English words.* Behavior Research Methods, 44(4), 978–990. Fetched by `scripts/fetch_aoa.py` (sha256-pinned) from the Ghent CRR `AoA_51715_words.zip` (Internet Archive capture, 2022-12-07; the original crr.ugent.be URL is 404). Only the `AoA_Kup` column is used (31,105 rated surface forms). **Not committed** to the repo: every clone runs the fetch script once.
+
+**AoA join fallback chain** (`l2_senses.aoa_lookup`): exact → lowercase → lemmatized → miss. Every `SenseEntry` records which stage matched in `aoa_match`, so a miss reaches L7 as an explicit miss rather than a silent gap. Run `py -3.11 -m doubletake.l2_senses` for the stage-by-stage coverage report.
+
+**Compound splits** (`l2_senses.compound_splits`): two-way splits where both halves are exact WordNet lemma names (autobiography → auto + biography). The part-senses are emitted with `source="wordnet_split:<a>+<b>"`, which lets L3 reach the resegmentation case.
