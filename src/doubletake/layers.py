@@ -24,6 +24,7 @@ from .l2_senses import retrieve
 from .l3_candidates import rank
 from .l4_anchoring import anchor_l4
 from .l5_resolution import resolve_l5
+from .l6_distinctness import distinctness_l6
 from .schema import AnalysisRecord, L2Result, LayerTrace
 
 
@@ -111,7 +112,18 @@ def run_l5(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 def run_l6(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
     """L6: Sense-distinctness and lexical-granularity check."""
-    raise NotImplementedError("L6 (sense distinctness) is not implemented.")
+    start = time.monotonic()
+    result = distinctness_l6(record, settings)
+    duration_ms = round((time.monotonic() - start) * 1000, 3)
+    record.l6_result = result
+    record.trace.append(LayerTrace(
+        layer="L6",
+        status="OK",
+        reason=f"status={result.distinctness_status} ablation={result.ambiguity_ablation}",
+        duration_ms=duration_ms,
+        hints_used=0,
+    ))
+    return record
 
 
 def run_l7(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:

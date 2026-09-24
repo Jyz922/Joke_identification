@@ -83,8 +83,19 @@ class Settings(BaseModel):
     # untested prompts. 8192 leaves ample margin; we pay for tokens generated,
     # not the cap. Do NOT lower to "save" tokens: too small a cap truncates the
     # JSON mid-emit (finish_reason=MAX_TOKENS) and used to masquerade as a
-    # parse failure — see ResolutionStatus.TRUNCATED_OUTPUT.
     L5_MAX_OUTPUT_TOKENS: int = 8192
+    L5_CALL_PAUSE_SECONDS: float = 6.0
+
+    # --- L6 backend ------------------------------------------------------
+    L6_BACKEND: BackendType = "gemini"
+    L6_MODEL: str | None = None
+    L6_MODEL_GEMINI: str = "gemini-3.6-flash"
+    L6_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
+    L6_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    L6_MODEL_OPENAI: str = "gpt-4o-mini"
+    L6_MODEL_DEEPSEEK: str = "deepseek-chat"
+    L6_MAX_OUTPUT_TOKENS: int = 4096
+    L6_CALL_PAUSE_SECONDS: float = 6.0
 
     # --- Provider API keys & custom base URLs ----------------------------
     OPENAI_API_KEY: str | None = None

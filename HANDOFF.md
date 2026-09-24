@@ -9,7 +9,7 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **260 passed, 10 deselected (85% coverage)** |
+| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **276 passed, 10 deselected (81% coverage)** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
 | L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
 | Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
@@ -53,17 +53,17 @@ Useful-population miss over three sessions: 27.4% -> 14.9% -> **11.2%**.
 | Layer | Status | Tests | Notes |
 |---|---|---|---|
 | L0-pre | **done** | yes (test_l0.py) | **100% cov**; `isinstance` non-string guard tested |
-| L0-post | **done** | yes (test_l0.py, test_runner.py) | Wired; dynamic resegmentation + homograph + final classification handling |
+| L0-post | **done** | yes (test_l0.py, test_runner.py) | Wired; dynamic resegmentation + homograph + SENSES_TOO_CLOSE downgrade handling |
 | L1 | **done** | yes (test_l1.py) | **100% cov**; regex-only genre routing; registered in runner |
 | L2 | **done** | yes (test_l2.py) | **93% cov**; WordNet + SemCor counts + Kuperman AoA; registered in runner |
 | L3 | **done** | yes (test_l3.py) | **95% cov**; CandidateEntry carries sense_a_id and sense_b_id; registered in runner |
 | L4 | **done** | yes (test_l4.py) | **65% cov**; multi-backend (Gemini, Anthropic, OpenAI, DeepSeek, etc.); substring alignment; compound split same-span handling; registered in runner |
 | L5 | **done**, 4 branches | yes (test_l5.py) | **84% cov**; multi-backend (Gemini, Anthropic, OpenAI, DeepSeek, etc.); QA polarity gate; resolving_sense |
-| L6 | **stub** | none | `run_l6` raises NotImplementedError |
+| L6 | **done** | yes (test_l6.py) | **54% cov**; multi-backend distinctness check; paraphrase + mutual suppression + ablation; registered in runner |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
 | providers.py | **done** | yes (test_providers.py) | **73% cov**; multi-provider layer: OpenAI, DeepSeek, Gemini, Anthropic, Groq, Mistral, DashScope, Moonshot, Zhipu, SiliconFlow, Compatible |
-| runner.py | **done** | yes (test_runner.py) | **83% cov**; full pipeline registered; exception isolation verified |
+| runner.py | **done** | yes (test_runner.py) | **85% cov**; full pipeline registered; exception isolation verified |
 
 ---
 
@@ -568,5 +568,23 @@ manage this install).
   - Added unit tests for OpenAI and DeepSeek backend routing and mock client execution in L4 and L5.
   - Updated `test_invalid_backend_rejected_at_config_load` to verify rejection of invalid backends while validating `"openai"` and `"deepseek"`.
 - **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **260 passed, 10 deselected (85% total coverage)**.
+
+### 2026-09-24 — L6 sense-distinctness implementation session (ant-core, offline, no API calls)
+
+- **L6 Sense Distinctness module (`src/doubletake/l6_distinctness.py`):**
+  - Designed and implemented structured sense-distinctness checking layer (`distinctness_l6`).
+  - Added structured-output prompt template in `src/doubletake/prompts/l6_distinctness.md` evaluating paraphrasability, mutual suppression, material difference, and ambiguity ablation.
+  - Added L6 configuration settings in `src/doubletake/config.py` (`L6_BACKEND`, `L6_MODEL`, `L6_MODEL_GEMINI`, `L6_MODEL_GEMINI_CHAIN`, `L6_MODEL_ANTHROPIC`, `L6_MODEL_OPENAI`, `L6_MODEL_DEEPSEEK`, `L6_MAX_OUTPUT_TOKENS`, `L6_CALL_PAUSE_SECONDS`).
+  - Enhanced `L6Result` schema in `schema.py` with optional `sense_a_paraphrase`, `sense_b_paraphrase`, and `explanation`.
+  - Added short-circuits: non-PASS L4 automatically yields `L6_SKIPPED_NO_PARAPHRASE`; compound splits / resegmentations automatically evaluate to `SENSES_DISTINCT` with `ambiguity_ablation=SUPPORTED`.
+  - Integrated `run_l6` into `layers.py` and registered `"L6"` in `_LAYER_REGISTRY` in `runner.py`.
+  - Updated `_l0_post_layer` in `runner.py`: items passing L5 whose senses are deemed `SENSES_TOO_CLOSE` by L6 are downgraded to `MainClassification.ONE_SENSE_ONLY`.
+- **L6 test suite (`tests/test_l6.py`):**
+  - Added 16 unit tests covering schema validation, short-circuits, mock LLM runs (Gemini, Anthropic, OpenAI, DeepSeek), parse failure fallback, pipeline trace populating, and runner integration.
+- **Constraints preserved:**
+  - L7 and L8 strictly preserved as stubs (`run_l7`, `run_l8` raise `NotImplementedError`).
+  - Zero live API calls made.
+- **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **276 passed, 10 deselected (81% total coverage)**.
+
 
 

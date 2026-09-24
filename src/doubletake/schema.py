@@ -208,6 +208,9 @@ class L6Result(BaseModel):
 
     distinctness_status: DistinctnessStatus
     ambiguity_ablation: Optional[AmbiguityAblation] = None
+    sense_a_paraphrase: Optional[str] = None
+    sense_b_paraphrase: Optional[str] = None
+    explanation: Optional[str] = None
 
 
 class L7Result(BaseModel):

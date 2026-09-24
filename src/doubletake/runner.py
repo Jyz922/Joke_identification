@@ -35,9 +35,9 @@ from typing import Callable
 
 from .config import DEFAULT_SETTINGS, Settings
 from .corpus import load_blind
-from .enums import AnchorRelation, AnchoringStatus, MainClassification, ResolutionStatus, ScopeLabel
+from .enums import AnchorRelation, AnchoringStatus, DistinctnessStatus, MainClassification, ResolutionStatus, ScopeLabel
 from .l0_scope import InputValidationError, LayerEvidence, assign_scope_label, preprocess_input
-from .layers import run_l1, run_l2, run_l3, run_l4, run_l5
+from .layers import run_l1, run_l2, run_l3, run_l4, run_l5, run_l6
 from .schema import AnalysisRecord, FinalVerdict, LayerTrace
 
 
@@ -113,11 +113,14 @@ def _l0_post_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord
     main_class = MainClassification.NO_AMBIGUITY_FOUND
     if record.l5_result is not None:
         if record.l5_result.resolution_status == ResolutionStatus.RESOLUTION_PASS:
-            main_class = (
-                MainClassification.VALID_COMPOUND_SPLIT_JOKE
-                if scope_label == ScopeLabel.COMPOUND_SPLIT
-                else MainClassification.VALID_HOMOGRAPH_JOKE
-            )
+            if record.l6_result is not None and record.l6_result.distinctness_status == DistinctnessStatus.SENSES_TOO_CLOSE:
+                main_class = MainClassification.ONE_SENSE_ONLY
+            else:
+                main_class = (
+                    MainClassification.VALID_COMPOUND_SPLIT_JOKE
+                    if scope_label == ScopeLabel.COMPOUND_SPLIT
+                    else MainClassification.VALID_HOMOGRAPH_JOKE
+                )
         elif record.l5_result.resolution_status == ResolutionStatus.RESOLUTION_FAIL:
             main_class = MainClassification.RESOLUTION_FAIL
     elif record.l4_result is not None:
@@ -155,6 +158,7 @@ register_layer("L2", run_l2)
 register_layer("L3", run_l3)
 register_layer("L4", run_l4)
 register_layer("L5", run_l5)
+register_layer("L6", run_l6)
 register_layer("L0-post", _l0_post_layer)
 
 
