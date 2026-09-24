@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.genai.errors import ClientError as GeminiClientError
 from google.genai.errors import ServerError as GeminiServerError
+from google.genai.types import FinishReason
 from pydantic import ValidationError
 
 from doubletake.config import DEFAULT_SETTINGS, Settings
@@ -295,6 +296,28 @@ class TestResolveL5Offline:
             client=_mock_client(["not json", "still not json"]),
         )
         assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT
+
+    def test_max_tokens_yields_truncated_not_insufficient(self) -> None:
+        """finish_reason=MAX_TOKENS must map to TRUNCATED_OUTPUT, distinct from
+        a parse failure, and must NOT consume a parse retry (one model call)."""
+        record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
+
+        truncated = MagicMock()
+        truncated.text = '{"polarity_or'  # cut off mid-JSON
+        truncated.candidates = [MagicMock(finish_reason=FinishReason.MAX_TOKENS)]
+        truncated.usage_metadata = MagicMock(thoughts_token_count=487)
+
+        client = MagicMock()
+        client.models.generate_content.return_value = truncated
+
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS, ambiguous_term="guts", client=client,
+        )
+        assert result.resolution_status == ResolutionStatus.TRUNCATED_OUTPUT
+        assert result.resolution_status != ResolutionStatus.INSUFFICIENT_CONTEXT
+        assert result.resolution_score is None
+        # No parse retry, no fallback — exactly one model call.
+        client.models.generate_content.assert_called_once()
 
     def test_retry_succeeds_on_second_attempt(self) -> None:
         """First response is malformed; second is valid — must return a real verdict."""

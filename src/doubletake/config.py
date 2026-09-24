@@ -58,6 +58,14 @@ class Settings(BaseModel):
     # Ordered fallback chain tried after the primary exhausts its 5xx retries.
     L5_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
     L5_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    # Max output tokens per Gemini call. Gemini 3.x counts THINKING tokens
+    # against this cap — measured thinking was 487 then 969 on the same temp-0
+    # prompt (2x variance), and the dialogue/definitional branches have longer,
+    # untested prompts. 8192 leaves ample margin; we pay for tokens generated,
+    # not the cap. Do NOT lower to "save" tokens: too small a cap truncates the
+    # JSON mid-emit (finish_reason=MAX_TOKENS) and used to masquerade as a
+    # parse failure — see ResolutionStatus.TRUNCATED_OUTPUT.
+    L5_MAX_OUTPUT_TOKENS: int = 8192
 
     # --- L5 QA resolution ------------------------------------------------
     # Weights must sum to 1.0 (asserted below).

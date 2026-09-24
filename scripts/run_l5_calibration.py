@@ -130,19 +130,33 @@ def run(fresh: bool) -> None:
                     continue
 
                 record, term = _build_record(fixture)
+                diag: dict = {}
                 t0 = time.monotonic()
                 try:
-                    result = resolve_l5(record, DEFAULT_SETTINGS, ambiguous_term=term)
+                    result = resolve_l5(
+                        record, DEFAULT_SETTINGS, ambiguous_term=term, diagnostics=diag
+                    )
                 except Exception as e:
                     print(f"  {fixture['id']:3s} run={run_idx} ERROR ({type(e).__name__}): {e}")
                     continue  # not written; will retry on resume
 
                 elapsed_ms = round((time.monotonic() - t0) * 1000)
 
-                # Save raw LLM output (subscores as returned)
+                # Persist the model's ACTUAL response (verbatim text + finish_reason),
+                # not our parsed subscores — otherwise failed parses leave no evidence.
+                # diag is empty for short-circuited items (no LLM call, e.g. N1).
                 raw_path = _RAW_DIR / f"{fixture['id']}_{run_idx:02d}.json"
                 raw_path.write_text(
-                    json.dumps(result.subscores, indent=2, default=str),
+                    json.dumps(
+                        {
+                            "raw_text": diag.get("raw_text", ""),
+                            "finish_reason": diag.get("finish_reason", ""),
+                            "thoughts_token_count": diag.get("thoughts_tokens"),
+                            "subscores": result.subscores,
+                        },
+                        indent=2,
+                        default=str,
+                    ),
                     encoding="utf-8",
                 )
 
@@ -155,6 +169,8 @@ def run(fresh: bool) -> None:
                     "subscores": result.subscores,
                     "resolution_score": result.resolution_score,
                     "verdict": str(result.resolution_status),
+                    "finish_reason": diag.get("finish_reason", ""),
+                    "thoughts_token_count": diag.get("thoughts_tokens"),
                     "retries": result.retries,
                     "wall_clock_ms": elapsed_ms,
                     "raw_response_path": str(raw_path.relative_to(Path(__file__).parent.parent)),
@@ -460,6 +476,49 @@ def _write_calibration_doc() -> None:
         if n_insufficient_schema > 0:
             schema_items = [row["item_id"] for row in insufficient if row["item_id"] != "N1"]
             lines += [f"  Items with unexpected INSUFFICIENT_CONTEXT: {schema_items}", ""]
+
+    # --- Q7b: Thinking-token distribution & truncation check ---
+    lines += ["## 7b. Thinking tokens & truncation (proves the cap held)", ""]
+    thoughts = [
+        row["thoughts_token_count"]
+        for row in all_rows
+        if row.get("thoughts_token_count") is not None
+    ]
+    finish_counts: dict[str, int] = {}
+    for row in all_rows:
+        fr = row.get("finish_reason") or "(none)"
+        finish_counts[fr] = finish_counts.get(fr, 0) + 1
+    n_truncated = sum(
+        1 for row in all_rows
+        if "MAX_TOKENS" in (row.get("finish_reason") or "")
+    )
+
+    if not all_rows:
+        lines += ["*No data yet.*", ""]
+    else:
+        lines += [f"- finish_reason counts: {finish_counts}", ""]
+        if thoughts:
+            lines += [
+                f"- thoughts_token_count over {len(thoughts)} model calls: "
+                f"min {min(thoughts)}, max {max(thoughts)}, "
+                f"mean {sum(thoughts)/len(thoughts):.0f}",
+                f"- Configured cap `L5_MAX_OUTPUT_TOKENS` = "
+                f"{DEFAULT_SETTINGS.L5_MAX_OUTPUT_TOKENS}",
+                "",
+            ]
+            if max(thoughts) >= DEFAULT_SETTINGS.L5_MAX_OUTPUT_TOKENS:
+                lines += ["**WARNING: max thinking tokens met or exceeded the cap — "
+                          "raise `L5_MAX_OUTPUT_TOKENS`.**", ""]
+            else:
+                headroom = DEFAULT_SETTINGS.L5_MAX_OUTPUT_TOKENS - max(thoughts)
+                lines += [f"Cap held: {headroom} tokens of headroom above the worst "
+                          "observed thinking cost.", ""]
+        else:
+            lines += ["*No thinking-token data recorded (all rows pre-date the fix "
+                      "or were short-circuited).*", ""]
+        if n_truncated:
+            lines += [f"**{n_truncated} TRUNCATED_OUTPUT row(s) — output was cut off "
+                      "mid-JSON. These are truncations, not model verdicts.**", ""]
 
     # --- Q8: Recommendation ---
     lines += ["## 8. Recommendation", ""]

@@ -39,6 +39,11 @@ class ResolutionStatus(StrEnum):
     RESOLUTION_PASS = "RESOLUTION_PASS"
     RESOLUTION_FAIL = "RESOLUTION_FAIL"
     INSUFFICIENT_CONTEXT = "INSUFFICIENT_CONTEXT"
+    # Model hit max_output_tokens before emitting complete JSON (thinking
+    # consumed the budget). A truncation, NOT a model verdict — surfaced
+    # distinctly so it can never be mistaken for RESOLUTION_FAIL or
+    # INSUFFICIENT_CONTEXT.
+    TRUNCATED_OUTPUT = "TRUNCATED_OUTPUT"
 
 
 class DistinctnessStatus(StrEnum):

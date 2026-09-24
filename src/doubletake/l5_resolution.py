@@ -8,7 +8,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import anthropic
 import google.genai as _genai
@@ -132,31 +132,53 @@ def _resolution_status(score: float, threshold: float) -> ResolutionStatus:
     )
 
 
-def _make_insufficient(
+class _L5Call(NamedTuple):
+    """Outcome of a completed L5 model round-trip, before result construction."""
+    parsed: dict[str, Any] | None
+    model_used: str
+    fallback_used: bool
+    retries: int
+    truncated: bool = False          # finish_reason == MAX_TOKENS
+    thoughts_tokens: int | None = None
+
+
+def _thoughts_tokens(response: Any) -> int | None:
+    um = getattr(response, "usage_metadata", None)
+    return getattr(um, "thoughts_token_count", None) if um is not None else None
+
+
+def _empty_result(
     genre: Genre,
+    *,
+    status: ResolutionStatus = ResolutionStatus.INSUFFICIENT_CONTEXT,
     model_used: str = "",
     fallback_used: bool = False,
     retries: int = 0,
 ) -> L5Result:
+    """Build an empty (no-subscore) L5 result carrying *status*.
+
+    Used for both INSUFFICIENT_CONTEXT (short-circuit / unparseable) and
+    TRUNCATED_OUTPUT (MAX_TOKENS) — resolution_score stays None either way.
+    """
     empty: dict[str, float] = {}
     kw = dict(model_used=model_used, fallback_used=fallback_used, retries=retries)
     if genre == Genre.QA_RIDDLE:
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
-            resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
+            resolution_status=status,
             subscores=empty,
             **kw,
         )
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
-            resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
+            resolution_status=status,
             subscores=empty,
             **kw,
         )
     return L5DialogueResult(
         genre=genre,
-        resolution_status=ResolutionStatus.INSUFFICIENT_CONTEXT,
+        resolution_status=status,
         subscores=empty,
         **kw,
     )
@@ -268,19 +290,25 @@ def _call_gemini_single(
     required_keys: frozenset[str] | None,
     model: str,
     client: _genai.Client,
-) -> tuple[dict[str, Any] | None, int, "_GeminiClientError | None"]:
+    max_output_tokens: int,
+    diagnostics: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, int, "_GeminiClientError | None", bool, int | None]:
     """One model: up to _5XX_MAX attempts with exponential backoff on 5xx.
 
-    Returns (parsed, retries, last_5xx_err):
-    - Success:           (dict, retries, None)
-    - Parse failure:     (None, retries, None)
-    - 5xx exhausted:     (None, retries, GeminiClientError)
+    Returns (parsed, retries, last_5xx_err, truncated, thoughts_tokens):
+    - Success:           (dict, retries, None, False, thoughts)
+    - Truncated:         (None, retries, None, True, thoughts)   finish_reason=MAX_TOKENS
+    - Parse failure:     (None, retries, None, False, thoughts)
+    - 5xx exhausted:     (None, retries, GeminiClientError, False, None)
+
+    Truncation returns immediately without a parse retry: a cut-off response is
+    not a parse problem, and retrying the same prompt just truncates again.
     """
     config = _genai_types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=response_model,
         temperature=0.0,
-        max_output_tokens=512,
+        max_output_tokens=max_output_tokens,
     )
     retries = 0
     last_5xx: _GeminiClientError | None = None
@@ -301,14 +329,29 @@ def _call_gemini_single(
                 suffix = "" if parse_attempt == 0 else _RETRY_SUFFIX
                 response = _gemini_generate(client, model, prompt_text + suffix, config)
                 raw: str = response.text
+                thoughts = _thoughts_tokens(response)
+                _cand = response.candidates[0] if response.candidates else None
+                _finish = getattr(_cand, "finish_reason", None) if _cand is not None else None
+                if diagnostics is not None:
+                    # Persist the model's ACTUAL response so failed parses are
+                    # not silently discarded (last attempt wins).
+                    diagnostics["raw_text"] = raw if raw is not None else ""
+                    diagnostics["finish_reason"] = str(_finish) if _finish is not None else ""
+                    diagnostics["thoughts_tokens"] = thoughts
+
+                if _finish == _genai_types.FinishReason.MAX_TOKENS:
+                    # Cut off before emitting complete JSON — surface distinctly,
+                    # do NOT parse or retry (would just truncate again).
+                    return None, retries, None, True, thoughts
+
                 try:
                     parsed = _extract_json(raw)
                     if required_keys:
                         _validate_keys(parsed, required_keys, parse_attempt, "gemini")
-                    return parsed, retries, None
+                    return parsed, retries, None, False, thoughts
                 except (json.JSONDecodeError, ValueError, IndexError):
                     if parse_attempt == 1:
-                        return None, retries, None
+                        return None, retries, None, False, thoughts
 
         except _GeminiServerError as e:
             if e.code in (500, 502, 503, 504):
@@ -320,7 +363,7 @@ def _call_gemini_single(
             else:
                 raise
 
-    return None, retries, last_5xx
+    return None, retries, last_5xx, False, None
 
 
 def _call_gemini_with_chain(
@@ -329,13 +372,13 @@ def _call_gemini_with_chain(
     required_keys: frozenset[str] | None,
     settings: Settings,
     client: _genai.Client | None,
-) -> tuple[dict[str, Any] | None, str, bool, int]:
+    diagnostics: dict[str, Any] | None = None,
+) -> _L5Call:
     """Try primary model then each fallback in chain on 5xx exhaustion.
 
-    Returns (parsed, model_used, fallback_used, total_retries).
     Raises RuntimeError if all models exhaust their 5xx retries.
-    Parse failure on any model returns (None, model, fallback_used, retries)
-    without trying the fallback chain.
+    Parse failure or truncation on any model returns immediately without trying
+    the fallback chain (neither is fixed by switching models).
     """
     if client is None:
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -347,17 +390,22 @@ def _call_gemini_with_chain(
     total_retries = 0
 
     for model_idx, model in enumerate(models):
-        parsed, retries, err_5xx = _call_gemini_single(
-            prompt_text, response_model, required_keys, model, client
+        parsed, retries, err_5xx, truncated, thoughts = _call_gemini_single(
+            prompt_text, response_model, required_keys, model, client,
+            settings.L5_MAX_OUTPUT_TOKENS, diagnostics,
         )
         total_retries += retries
+        fallback_used = model_idx > 0
+
+        if truncated:
+            return _L5Call(None, model, fallback_used, total_retries, True, thoughts)
 
         if parsed is not None:
-            return parsed, model, model_idx > 0, total_retries
+            return _L5Call(parsed, model, fallback_used, total_retries, False, thoughts)
 
         if err_5xx is None:
             # parse failure — don't try fallback, caller returns INSUFFICIENT_CONTEXT
-            return None, model, model_idx > 0, total_retries
+            return _L5Call(None, model, fallback_used, total_retries, False, thoughts)
 
         # 5xx exhausted; try next model if available
         if model_idx < len(models) - 1:
@@ -383,15 +431,15 @@ def _complete_json(
     response_model: type,
     settings: Settings,
     client: Any,
-) -> tuple[dict[str, Any] | None, str, bool, int]:
-    """Returns (parsed, model_used, fallback_used, retries)."""
+    diagnostics: dict[str, Any] | None = None,
+) -> _L5Call:
     if settings.L5_BACKEND == "gemini":
         return _call_gemini_with_chain(
-            prompt, response_model, required_keys, settings, client
+            prompt, response_model, required_keys, settings, client, diagnostics
         )
     if settings.L5_BACKEND == "anthropic":
         result = _call_llm(prompt, settings.L5_MODEL_ANTHROPIC, client, required_keys=required_keys)
-        return result, settings.L5_MODEL_ANTHROPIC, False, 0
+        return _L5Call(result, settings.L5_MODEL_ANTHROPIC, False, 0)
     raise ValueError(f"Unknown L5_BACKEND: {settings.L5_BACKEND!r}")
 
 
@@ -405,6 +453,7 @@ def resolve_l5(
     *,
     ambiguous_term: str | None = None,
     client: Any = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> L5Result:
     """Compute the L5 resolution result for *record*.
 
@@ -412,6 +461,10 @@ def resolve_l5(
         l3_result candidates or falls back to sense_a_anchor_quote.
     client: injectable backend client (anthropic.Anthropic or google.genai.Client);
         if None, the appropriate client is created from the environment.
+    diagnostics: optional dict sink; if provided, the Gemini path fills it with
+        "raw_text" (verbatim response.text of the last model call) and
+        "finish_reason". Lets callers persist the actual model output even when
+        parsing fails — without bloating the L5Result that flows into every record.
 
     Raises ValueError if l1_result or l4_result is absent (L1 and L4 must
     have run before L5).
@@ -429,7 +482,7 @@ def resolve_l5(
             "L5 short-circuit: %s — anchoring_status=%s, no LLM call",
             record.item_id, l4.anchoring_status,
         )
-        return _make_insufficient(genre)
+        return _empty_result(genre)
 
     if (l4.sense_a_anchor_quote == l4.sense_b_anchor_quote
             and l4.anchor_relation != AnchorRelation.RESEGMENTATION):
@@ -438,7 +491,7 @@ def resolve_l5(
             " (RESEGMENTATION required for same-span anchors), no LLM call",
             record.item_id, l4.sense_a_anchor_quote, l4.anchor_relation,
         )
-        return _make_insufficient(genre)
+        return _empty_result(genre)
 
     term = ambiguous_term
     if term is None and record.l3_result and record.l3_result.candidates:
@@ -470,22 +523,42 @@ def resolve_l5(
         weights = _L5_DIALOGUE_WEIGHTS
         response_model = _DialogueLLMResponse
 
-    parsed, model_used, fallback_used, retries = _complete_json(
-        prompt, frozenset(weights), response_model, settings, client
+    call = _complete_json(
+        prompt, frozenset(weights), response_model, settings, client, diagnostics
     )
-    if parsed is None:
-        return _make_insufficient(
-            genre, model_used=model_used, fallback_used=fallback_used, retries=retries
+
+    if call.truncated:
+        _LOG.error(
+            "L5 TRUNCATED_OUTPUT: %s — finish_reason=MAX_TOKENS, thoughts_token_count=%s, "
+            "model=%s hit max_output_tokens=%d before emitting complete JSON. "
+            "This is a truncation, NOT a model verdict.",
+            record.item_id, call.thoughts_tokens, call.model_used,
+            settings.L5_MAX_OUTPUT_TOKENS,
+        )
+        return _empty_result(
+            genre,
+            status=ResolutionStatus.TRUNCATED_OUTPUT,
+            model_used=call.model_used,
+            fallback_used=call.fallback_used,
+            retries=call.retries,
         )
 
-    subscores = {k: float(parsed[k]) for k in weights}
+    if call.parsed is None:
+        return _empty_result(
+            genre,
+            model_used=call.model_used,
+            fallback_used=call.fallback_used,
+            retries=call.retries,
+        )
+
+    subscores = {k: float(call.parsed[k]) for k in weights}
     score = _weighted_score(subscores, weights)
     kw = dict(
         resolution_score=round(score, 4),
         subscores=subscores,
-        model_used=model_used,
-        fallback_used=fallback_used,
-        retries=retries,
+        model_used=call.model_used,
+        fallback_used=call.fallback_used,
+        retries=call.retries,
     )
 
     if genre == Genre.QA_RIDDLE:
