@@ -157,10 +157,19 @@ Change `L5_BACKEND = "anthropic"` in `Settings` (or override in tests).  The `_c
 
 ---
 
-### Deviation 2 — L5_RESOLUTION_THRESHOLD added (not named in README)
+### Deviation 2 — L5_RESOLUTION_THRESHOLDS added, per genre (not named in README)
 
 **README says:** *the weighted resolution score formula, but no pass/fail threshold.*
 
-**Implementation:** `L5_RESOLUTION_THRESHOLD = 0.60` is declared in `Settings` as the minimum weighted score required for a `RESOLUTION_PASS` verdict.
+**Implementation:** `L5_RESOLUTION_THRESHOLDS` in `Settings` maps each genre to the minimum weighted score required for a `RESOLUTION_PASS` verdict:
 
-**Reason:** without a named threshold, every implementation would embed the cut-off as a magic number inside L5 logic, making it invisible and non-tunable.  Declaring it in `config.py` gives it a single authoritative home, a name, and a docstring so it can be adjusted during evaluation without touching layer logic.
+| Genre | Threshold | Basis |
+|---|---|---|
+| QA_RIDDLE | 0.46 | 5-run calibration: X1 (negative) max 0.417, E1 (positive) min 0.507. Set from per-run ranges, not means — verdicts are per run. |
+| DEFINITIONAL_ONELINER | 0.60 | Positives only (A1, and P2 if its FAIL label is wrong). No validated negative. |
+| DIALOGUE_MISUNDERSTANDING | 0.60 | Positives only (D1, P3). No validated negative. |
+| DECLARATIVE | 0.60 | **UNVALIDATED** — no declarative item has been scored live. Placeholder until declarative jokes/non-jokes from the annotated corpus are calibrated. |
+
+No QA threshold separates S1 (positive, 0.58–0.68) from S2 (negative, 0.59–0.86). That inversion comes from how the L4 fixtures label the senses, not from the cut-off.
+
+**Reason:** without a named threshold, every implementation would embed the cut-off as a magic number inside L5 logic, making it invisible and non-tunable.  Per-genre because each branch has a different subscore set, so scores land on different scales (QA 0.27–0.86 vs definitional/dialogue 0.86–0.94 in calibration).

@@ -589,23 +589,23 @@ def resolve_l5(
     if genre == Genre.QA_RIDDLE:
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
-            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
+            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLDS[genre]),
             **kw,
         )
     if genre == Genre.DEFINITIONAL_ONELINER:
         return L5DefinitionalResult(
             genre=Genre.DEFINITIONAL_ONELINER,
-            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
+            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLDS[genre]),
             **kw,
         )
     if genre == Genre.DECLARATIVE:
         return L5DeclarativeResult(
             genre=Genre.DECLARATIVE,
-            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
+            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLDS[genre]),
             **kw,
         )
     return L5DialogueResult(
         genre=genre,
-        resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLD),
+        resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLDS[genre]),
         **kw,
     )

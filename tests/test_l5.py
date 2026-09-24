@@ -236,7 +236,7 @@ class TestResolveL5Offline:
         )
         assert isinstance(result, L5QAResult)
         assert result.resolution_status == ResolutionStatus.RESOLUTION_PASS
-        assert result.resolution_score > DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD
+        assert result.resolution_score > DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLDS[Genre.QA_RIDDLE]
 
     def test_qa_fail_with_low_scores(self) -> None:
         record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
@@ -388,6 +388,21 @@ class TestResolveL5Offline:
         )
         assert isinstance(result, L5DialogueResult)
         assert abs(result.resolution_score - 1.0) < 1e-4
+
+    def test_threshold_is_per_genre(self) -> None:
+        """0.5 passes QA (cut-off 0.46) but fails DECLARATIVE (cut-off 0.60)."""
+        qa = resolve_l5(
+            _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4()),
+            DEFAULT_SETTINGS, ambiguous_term="guts",
+            client=_mock_client([json.dumps({k: 0.5 for k in DEFAULT_SETTINGS.L5_QA_WEIGHTS})]),
+        )
+        decl = resolve_l5(
+            _make_record(self._QA_TEXT, Genre.DECLARATIVE, self._qa_l4()),
+            DEFAULT_SETTINGS, ambiguous_term="guts",
+            client=_mock_client([json.dumps({k: 0.5 for k in _L5_DECLARATIVE_WEIGHTS})]),
+        )
+        assert qa.resolution_status == ResolutionStatus.RESOLUTION_PASS
+        assert decl.resolution_status == ResolutionStatus.RESOLUTION_FAIL
 
     def test_declarative_score_uses_correct_weights(self) -> None:
         l4 = L4Result(

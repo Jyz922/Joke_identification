@@ -221,7 +221,7 @@ def _write_calibration_doc() -> None:
         f"Primary model: `{DEFAULT_SETTINGS.L5_MODEL_GEMINI}`  ",
         f"Fallback chain: `{DEFAULT_SETTINGS.L5_MODEL_GEMINI_CHAIN}`  ",
         f"Target runs: {_N_RUNS}  ",
-        f"Threshold: {DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}  ",
+        f"Thresholds: { {str(g): t for g, t in DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLDS.items()} }  ",
         "",
     ]
 
@@ -339,13 +339,18 @@ def _write_calibration_doc() -> None:
 
     # --- Q3: Does polarity alone determine the verdict? ---
     lines += ["## 3. Does polarity alone determine the verdict?", ""]
+    qa_t = DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLDS[Genre.QA_RIDDLE]
+    pol_w = DEFAULT_SETTINGS.L5_QA_WEIGHTS["polarity_or_direction"]
+    others_max = 1.0 - pol_w
     lines += [
-        f"With weight `polarity_or_direction = 0.45` and threshold `{DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}`:",
+        f"With weight `polarity_or_direction = {pol_w}` and QA threshold `{qa_t}`:",
         "",
-        "- If `polarity = 0.0`: maximum score from other four features = 0.55 < 0.60 → **always FAIL** regardless of others.",
-        "- If `polarity = 1.0`: score ≥ 0.45. Needs other features ≥ 0.15 for PASS at threshold 0.60.",
-        f"  - Threshold ≤ 0.45 would make polarity=1 a guaranteed PASS.",
-        f"  - Current threshold 0.60 is **not inert** — other features contribute 0.15 to tip a borderline case.",
+        f"- If `polarity = 0.0`: maximum score from other four features = {others_max:.2f}"
+        + (f" < {qa_t} → **always FAIL** regardless of others." if others_max < qa_t
+           else f" ≥ {qa_t} → can still PASS on the other features alone."),
+        f"- If `polarity = 1.0`: score ≥ {pol_w}"
+        + (" → **guaranteed PASS**." if pol_w >= qa_t
+           else f". Needs other features ≥ {qa_t - pol_w:.2f} for PASS."),
         "",
     ]
 

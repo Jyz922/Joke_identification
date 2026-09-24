@@ -192,7 +192,7 @@ def run(
             "MAX_NON_ASCII_RATIO": settings.MAX_NON_ASCII_RATIO,
             "L3_TOP_K": settings.L3_TOP_K,
             "L5_QA_WEIGHTS": settings.L5_QA_WEIGHTS,
-            "L5_RESOLUTION_THRESHOLD": settings.L5_RESOLUTION_THRESHOLD,
+            "L5_RESOLUTION_THRESHOLDS": dict(settings.L5_RESOLUTION_THRESHOLDS),
         },
         "layers": [name for name, _ in _LAYER_REGISTRY],
         "item_count": len(blind_items),
