@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-24 by daren-l5 L3-gate/MWE/AoA session (offline, no API calls)
+Last updated: 2026-09-24 by daren-l5 apostrophe-audit/adverb-AoA session (offline, no API calls)
 
 ---
 
@@ -9,10 +9,11 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `py -3.11 -m pytest -q -m "not live"` | **177 passed, 10 deselected** |
+| Offline suite | `py -3.11 -m pytest -q -m "not live"` | **189 passed, 10 deselected** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
-| L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8) |
-| Corpus MWEs | scratch script over jokes.json + notjokes.json | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
+| L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
+| Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
+| Curly-apostrophe negation | `tests/test_l1.py` on the real jokes.json strings | couldn’t / isn’t -> negation; Dan’s -> not negation; curly == ASCII |
 | jokes.json encoding | raw bytes (`od -c`) | **Clean.** 0 U+FFFD; 3 correct U+2019 apostrophes |
 | Live suite / calibration | none | **NOT run this session** |
 
@@ -22,17 +23,24 @@ WordNet auto-downloads on first use (network, not a paid API).
 
 ### L2 AoA coverage (cumulative %)
 
-Chain: exact -> lowercase -> lemmatized (both directions) -> derived_from_parts -> miss.
+Chain: exact -> lowercase -> lemmatized (both directions) -> derived_from_adjective ->
+derived_from_parts -> miss.
 
-| Population | exact | +lowercase | +lemmatized | +derived | miss |
-|---|---|---|---|---|---|
-| all WordNet lemma names (148,730) | 18.9 | 19.5 | 21.9 | 51.3 | 48.7 |
-| single-word lemmas (79,264) | 35.4 | 36.5 | 41.1 | 48.7 | 51.3 |
-| single-word, semcor_count>0 (17,415) | 71.8 | 72.5 | 79.8 | 85.1 | **14.9** |
-| MWE lemmas (64,243) | 0.0 | 0.0 | 0.0 | 52.5 | 47.5 |
+| Population | exact | +lowercase | +lemmatized | +adjective | +parts | miss |
+|---|---|---|---|---|---|---|
+| all WordNet lemma names (148,730) | 18.9 | 19.5 | 21.9 | 23.6 | 52.6 | 47.4 |
+| single-word lemmas (79,264) | 35.4 | 36.5 | 41.1 | 44.2 | 51.3 | 48.7 |
+| single-word, semcor_count>0 (17,415) | 71.8 | 72.5 | 79.8 | 84.5 | 88.8 | **11.2** |
+| MWE lemmas (64,243) | 0.0 | 0.0 | 0.0 | 0.0 | 52.5 | 47.5 |
 
-Useful population miss: 27.4% (last session) -> 14.9%. Of that, 7.3 pts come from a stage-3
-bug fix (the query side was never lemmatized) and 5.3 pts from derived_from_parts.
+Useful-population miss over three sessions: 27.4% -> 14.9% -> **11.2%**.
+- **Correction:** the first session's claim that "the fallbacks add only +0.8 pts" was WRONG. Stage 3
+  lemmatized only the AoA side, so surface-form queries (washing, assets, diminished) missed.
+  Fixing that alone is worth 7.3 pts (72.5 -> 79.8).
+- derived_from_adjective (adverb -> pertainym adjective): +4.7 pts, including adverbs that
+  previously missed outright. derived_from_parts: +4.3 pts.
+
+---
 
 ## Claimed but unverified
 
@@ -171,7 +179,7 @@ QA_RIDDLE but has no answer clause; the QA prompt assumes there is one.
 Archive capture of `AoA_51715_words.zip` (column AoA_Kup, 31,105 rows vs the paper's 30,121).
 Licence: NoRaRe lists the dataset as CC-BY 4.0 [not verified at source]; not committed anyway.
 
-**w. derived_from_parts mis-splits -ly adverbs.** 102 credible single-word lemmas derive via a
+**w. -ly adverb mis-splits — RESOLVED (49aab03).** Adverbs now take their WordNet pertainym adjective's AoA; 98/102 resolve, 4 become explicit misses. `growling` = grow + ling (non-adverb) is still open. Original note: 102 credible single-word lemmas derive via a
 bogus `ally` split (`comically` = comic + ally, AoA 9.61). Conservative (overestimates age) and
 labelled, but wrong. The candidate fix is a WordNet pertainym stage (adverb -> adjective); not
 built, not asked for. `growling` = grow + ling is the same class of error.
@@ -243,6 +251,28 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
 ## Session log
 
 *(append-only — never rewrite old entries)*
+
+### 2026-09-24 — Apostrophe audit + adverb AoA session (daren-l5), offline, no API calls
+
+Commits: 9fdeabf (apostrophe audit), 49aab03 (adverb AoA).
+
+- **Premise check:** the owner's brief said the negation edit "failed silently". It did in
+  b5ee53f, but 51dd615 landed it. Re-verified on the real jokes.json strings: couldn’t / isn’t ->
+  negation True; Dan’s -> False.
+- **Apostrophe audit (every rule in src/):** `_TOKEN`, `_NEGATION` were already OK. Fixed
+  `_DEFINITION` (head was ASCII-only) and L2 `retrieve()`, whose `isalpha()` dropped every token
+  containing an apostrophe, so possessives (car's in X1, Dan’s in the corpus) never reached L2.
+  L0 is unaffected (NFC keeps ’; 1-3 non-ASCII chars is far under the 0.15 ratio). No scripts
+  touch apostrophes. Tests use the 3 real U+2019 strings from jokes.json and assert curly and
+  ASCII apostrophes analyze identically.
+- **Adverb AoA:** new stage derived_from_adjective via WordNet pertainyms; single-word adverbs are
+  never compound-split. additionally, asymmetrically, basically (no pertainym) and
+  macroscopically (adjective unrated) are now explicit misses.
+- **Figures:** the current-state AoA table is recomputed; the "+0.8 pts" correction is stated
+  there explicitly.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` -> **189 passed, 10 deselected**
+(start: 177). Gold top-3 still 8/10. No live tests, no calibration, no API calls.
 
 ### 2026-09-24 — L3 gate / MWE / AoA session (daren-l5), offline, no API calls
 
