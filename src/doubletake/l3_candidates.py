@@ -2,18 +2,19 @@
 
 aoa_estimate is never read here (README deviation 1: age effects live in L7).
 
-Credible sense  = semcor_count > 0.
-Domain contrast = two credible senses with different WordNet lexname().
-Gap             = |c1 - c2| / (c1 + c2), c1 = top credible count,
-                  c2 = best credible count in a DIFFERENT lexname than c1's.
-score = 1 - gap: a term whose two readings are about equally common ranks
-first; a term whose second reading is vanishingly rare ranks last.
+Every WordNet sense is credible; there is no frequency gate (SemCor is small
+and hand-tagged: shingles, net-as-income, ex all have count 0).
 
-Compound splits (source "wordnet_split:a+b"): both parts need a credible
-sense; contrast = a part's top lexname differs from the whole word's; gap is
-between the two parts' top counts. NOT whole-vs-split: rare whole words
-(autobiography: count 0) would always score 0 and never reach top-k, though
-the whole word's rarity says nothing about whether the split reading is live.
+score = W_CONTRAST * contrast + W_BALANCE * balance
+  contrast (strong)  1.0 if two senses carry different WordNet lexname()s, else 0.
+  balance  (weak)    (c2 + 1) / (c1 + 1): c1 = SemCor count of the top sense,
+                     c2 = best count in a DIFFERENT lexname. Add-one smoothing, so
+                     unseen-in-SemCor senses are neutral rather than disqualifying.
+Contrast outweighs balance, so every contrastive term ranks above every
+non-contrastive one.
+
+Compound splits (source "wordnet_split:a+b"): contrast = a part's top lexname
+differs from the whole word's; balance is between the two parts' top counts.
 """
 
 from __future__ import annotations
@@ -22,46 +23,54 @@ from collections import defaultdict
 
 from .schema import CandidateEntry, L3Result, SenseEntry
 
+W_CONTRAST = 0.7
+W_BALANCE = 0.3
+
 
 def _count(s: SenseEntry) -> int:
     return s.semcor_count or 0
 
 
-def _entry(term: str, c1: int, c2: int, split: bool) -> CandidateEntry:
-    gap = abs(c1 - c2) / (c1 + c2)
-    return CandidateEntry(term=term, score=round(1 - gap, 4), score_components={
-        "top_count": float(c1), "contrast_count": float(c2),
-        "gap": round(gap, 4), "compound_split": float(split),
-    })
+def _top(senses: list[SenseEntry]) -> SenseEntry:
+    # max() keeps the first of equal counts, i.e. WordNet's own sense order.
+    return max(senses, key=_count)
 
 
-def _homograph(term: str, whole: list[SenseEntry]) -> CandidateEntry | None:
-    credible = [s for s in whole if _count(s) > 0]
-    if not credible:
-        return None
-    top = max(credible, key=_count)
-    others = [s for s in credible if s.lexname != top.lexname]
+def _entry(term: str, contrast: bool, c1: int, c2: int, split: bool) -> CandidateEntry:
+    balance = (c2 + 1) / (c1 + 1) if contrast else 0.0
+    return CandidateEntry(
+        term=term,
+        score=round(W_CONTRAST * contrast + W_BALANCE * balance, 4),
+        score_components={
+            "contrast": float(contrast), "balance": round(balance, 4),
+            "top_count": float(c1), "contrast_count": float(c2),
+            "compound_split": float(split),
+        },
+    )
+
+
+def _homograph(term: str, whole: list[SenseEntry]) -> CandidateEntry:
+    top = _top(whole)
+    others = [s for s in whole if s.lexname != top.lexname]
     if not others:
-        return None
-    return _entry(term, _count(top), _count(max(others, key=_count)), split=False)
+        return _entry(term, False, _count(top), 0, split=False)
+    return _entry(term, True, _count(top), _count(_top(others)), split=False)
 
 
 def _split(term: str, source: str, whole: list[SenseEntry], parts: list[SenseEntry]) -> CandidateEntry | None:
     if not whole:
         return None
-    whole_top = max(whole, key=_count)
     tops = []
     # ponytail: a part-sense belongs to part p iff its lemma is p; a part WordNet
     # only knows by an inflected form ("pets") is dropped rather than guessed.
     for p in source.split(":", 1)[1].split("+"):
-        credible = [s for s in parts if s.lemma.lower() == p and _count(s) > 0]
-        if not credible:
+        mine = [s for s in parts if s.lemma.lower() == p]
+        if not mine:
             return None
-        tops.append(max(credible, key=_count))
-    if all(t.lexname == whole_top.lexname for t in tops):
-        return None
+        tops.append(_top(mine))
+    contrast = any(t.lexname != _top(whole).lexname for t in tops)
     c1, c2 = sorted((_count(t) for t in tops), reverse=True)
-    return _entry(term, c1, c2, split=True)
+    return _entry(term, contrast, c1, c2, split=True)
 
 
 def rank(senses: list[SenseEntry], top_k: int) -> L3Result:
@@ -72,7 +81,12 @@ def rank(senses: list[SenseEntry], top_k: int) -> L3Result:
             whole[s.term].append(s)
         else:
             splits[(s.term, s.source)].append(s)
-    cands = [c for t, ss in whole.items() if (c := _homograph(t, ss))]
+    cands = [_homograph(t, ss) for t, ss in whole.items()]
     cands += [c for (t, src), ss in splits.items() if (c := _split(t, src, whole[t], ss))]
     cands.sort(key=lambda c: (-c.score, c.term))
-    return L3Result(candidates=cands[:top_k])
+    # One slot per term: a word can be both a homograph and a split (life ->
+    # li + fe); keep its best-scoring reading so top-k holds k distinct terms.
+    best: dict[str, CandidateEntry] = {}
+    for c in cands:
+        best.setdefault(c.term, c)
+    return L3Result(candidates=list(best.values())[:top_k])
