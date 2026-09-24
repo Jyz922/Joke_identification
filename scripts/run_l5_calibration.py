@@ -57,6 +57,7 @@ def _build_record(fixture: dict) -> tuple[AnalysisRecord, str]:
         sense_b_anchor_quote=l4d["sense_b_anchor_quote"],
         anchor_relation=l4d.get("anchor_relation"),
         anchoring_status=l4d["anchoring_status"],
+        resolving_sense=l4d.get("resolving_sense"),
     )
     record = AnalysisRecord(
         item_id=fixture["id"], text=fixture["text"], target_ages=[8]

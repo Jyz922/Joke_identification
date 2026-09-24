@@ -33,7 +33,8 @@ import google.genai.types as gtypes
 
 from doubletake.config import DEFAULT_SETTINGS
 from doubletake.enums import Genre
-from doubletake.l5_resolution import _PLACEHOLDER, _QALLMResponse, _load_prompt
+from doubletake.l5_resolution import _QALLMResponse, _render_prompt
+from doubletake.schema import L4Result
 
 _FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "l5_anchors.jsonl"
 
@@ -46,19 +47,9 @@ def _s1_fixture() -> dict:
 
 
 def _build_prompt(fx: dict) -> str:
-    l4 = fx["l4_result"]
-    ar = l4.get("anchor_relation")
-    variables = {
-        "text": fx["text"],
-        "ambiguous_term": fx["ambiguous_term"],
-        "sense_a": l4["sense_a"],
-        "sense_a_anchor_quote": l4["sense_a_anchor_quote"],
-        "sense_b": l4["sense_b"],
-        "sense_b_anchor_quote": l4["sense_b_anchor_quote"],
-        "anchor_relation": str(ar) if ar is not None else "unknown",
-    }
-    template = _load_prompt(Genre.QA_RIDDLE)
-    return _PLACEHOLDER.sub(lambda m: variables.get(m.group(1), m.group(0)), template)
+    return _render_prompt(
+        Genre.QA_RIDDLE, fx["text"], fx["ambiguous_term"], L4Result(**fx["l4_result"])
+    )
 
 
 def main() -> None:

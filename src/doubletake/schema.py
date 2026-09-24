@@ -91,6 +91,11 @@ class L4Result(BaseModel):
     not the ambiguous term itself.  They must be distinct unless
     anchor_relation is RESEGMENTATION (compound-split: both senses anchor to
     the compound word, so identical spans are correct and expected).
+
+    resolving_sense names which of sense_a / sense_b the punchline resolves
+    to.  a/b order carries NO meaning: prompts must read the punchline sense
+    through this field, never by position.  Required when anchoring_status is
+    PASS (L5 runs only then).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -101,6 +106,13 @@ class L4Result(BaseModel):
     sense_b_anchor_quote: str
     anchor_relation: Optional[AnchorRelation] = None
     anchoring_status: AnchoringStatus
+    resolving_sense: Optional[Literal["sense_a", "sense_b"]] = None
+
+    @model_validator(mode="after")
+    def _pass_requires_resolving_sense(self) -> "L4Result":
+        if self.anchoring_status == AnchoringStatus.PASS and self.resolving_sense is None:
+            raise ValueError("resolving_sense is required when anchoring_status is PASS")
+        return self
 
 
 class L5QAResult(BaseModel):

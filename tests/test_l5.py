@@ -21,6 +21,7 @@ from doubletake.l5_resolution import (
     _L5_DEFINITIONAL_WEIGHTS,
     _L5_DIALOGUE_WEIGHTS,
     _gemini_generate,
+    _render_prompt,
     resolve_l5,
 )
 from doubletake.schema import (
@@ -92,6 +93,7 @@ def _build_l4(data: dict[str, Any]) -> L4Result:
         sense_b_anchor_quote=data["sense_b_anchor_quote"],
         anchor_relation=data.get("anchor_relation"),
         anchoring_status=data["anchoring_status"],
+        resolving_sense=data.get("resolving_sense"),
     )
 
 
@@ -201,6 +203,7 @@ class TestResolveL5Offline:
             sense_b_anchor_quote="skeletons",
             anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_a",
         )
 
     def _definitional_l4(self) -> L4Result:
@@ -211,6 +214,7 @@ class TestResolveL5Offline:
             sense_b_anchor_quote="autobiography",  # same-span — resegmentation
             anchor_relation=AnchorRelation.RESEGMENTATION,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_b",
         )
 
     def _dialogue_l4(self) -> L4Result:
@@ -221,6 +225,7 @@ class TestResolveL5Offline:
             sense_b_anchor_quote="pair of curtains",
             anchor_relation=AnchorRelation.SPEAKER_MISMATCH,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_b",
         )
 
     def test_qa_pass_with_high_scores(self) -> None:
@@ -389,6 +394,30 @@ class TestResolveL5Offline:
         assert isinstance(result, L5DialogueResult)
         assert abs(result.resolution_score - 1.0) < 1e-4
 
+    def test_prompt_ignores_sense_order(self) -> None:
+        """Swapping sense_a/sense_b (and resolving_sense with them) renders the
+        identical QA prompt — polarity can't flip on fixture ordering."""
+        l4 = self._qa_l4()
+        swapped = L4Result(
+            sense_a=l4.sense_b, sense_a_anchor_quote=l4.sense_b_anchor_quote,
+            sense_b=l4.sense_a, sense_b_anchor_quote=l4.sense_a_anchor_quote,
+            anchor_relation=l4.anchor_relation, anchoring_status=l4.anchoring_status,
+            resolving_sense="sense_b" if l4.resolving_sense == "sense_a" else "sense_a",
+        )
+        a = _render_prompt(Genre.QA_RIDDLE, self._QA_TEXT, "guts", l4)
+        b = _render_prompt(Genre.QA_RIDDLE, self._QA_TEXT, "guts", swapped)
+        assert a == b
+        assert "{" + "resolving_sense}" not in a
+        assert "Punchline sense (the reading the punchline resolves to):** courage" in a
+
+    def test_pass_anchoring_requires_resolving_sense(self) -> None:
+        with pytest.raises(ValidationError):
+            L4Result(
+                sense_a="x", sense_a_anchor_quote="x", sense_b="y", sense_b_anchor_quote="y",
+                anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
+                anchoring_status=AnchoringStatus.PASS,
+            )
+
     def test_threshold_is_per_genre(self) -> None:
         """0.5 passes QA (cut-off 0.46) but fails DECLARATIVE (cut-off 0.60)."""
         qa = resolve_l5(
@@ -412,6 +441,7 @@ class TestResolveL5Offline:
             sense_b_anchor_quote="calculating the net loss",
             anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_b",
         )
         record = _make_record(
             "The fishermen are calculating the net loss.", Genre.DECLARATIVE, l4
@@ -500,6 +530,7 @@ def _qa_record_for_routing() -> AnalysisRecord:
         sense_b_anchor_quote="skeletons",
         anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
         anchoring_status=AnchoringStatus.PASS,
+        resolving_sense="sense_a",
     )
     return record
 

@@ -21,6 +21,7 @@ from .config import Settings
 from .enums import AnchorRelation, AnchoringStatus, Genre, ResolutionStatus
 from .schema import (
     AnalysisRecord,
+    L4Result,
     L5DeclarativeResult,
     L5DefinitionalResult,
     L5DialogueResult,
@@ -108,6 +109,30 @@ class _DeclarativeLLMResponse(BaseModel):
 
 def _load_prompt(genre: Genre) -> str:
     return (_PROMPTS_DIR / _GENRE_TO_PROMPT[genre]).read_text(encoding="utf-8")
+
+
+def _render_prompt(genre: Genre, text: str, term: str, l4: L4Result) -> str:
+    """Fill the genre template. {resolving_sense}/{other_sense} are chosen via
+    l4.resolving_sense, so prompts never depend on sense_a/sense_b order."""
+    res, other = (
+        ("sense_a", "sense_b") if l4.resolving_sense == "sense_a" else ("sense_b", "sense_a")
+    )
+    variables = {
+        "text": text,
+        "ambiguous_term": term,
+        "sense_a": l4.sense_a,
+        "sense_a_anchor_quote": l4.sense_a_anchor_quote,
+        "sense_b": l4.sense_b,
+        "sense_b_anchor_quote": l4.sense_b_anchor_quote,
+        "resolving_sense": getattr(l4, res),
+        "resolving_sense_anchor_quote": getattr(l4, f"{res}_anchor_quote"),
+        "other_sense": getattr(l4, other),
+        "other_sense_anchor_quote": getattr(l4, f"{other}_anchor_quote"),
+        "anchor_relation": (
+            str(l4.anchor_relation) if l4.anchor_relation is not None else "unknown"
+        ),
+    }
+    return _PLACEHOLDER.sub(lambda m: variables.get(m.group(1), m.group(0)), _load_prompt(genre))
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -521,19 +546,7 @@ def resolve_l5(
     if term is None:
         term = l4.sense_a_anchor_quote
 
-    template = _load_prompt(genre)
-    variables = {
-        "text": record.text,
-        "ambiguous_term": term,
-        "sense_a": l4.sense_a,
-        "sense_a_anchor_quote": l4.sense_a_anchor_quote,
-        "sense_b": l4.sense_b,
-        "sense_b_anchor_quote": l4.sense_b_anchor_quote,
-        "anchor_relation": (
-            str(l4.anchor_relation) if l4.anchor_relation is not None else "unknown"
-        ),
-    }
-    prompt = _PLACEHOLDER.sub(lambda m: variables.get(m.group(1), m.group(0)), template)
+    prompt = _render_prompt(genre, record.text, term, l4)
 
     if genre == Genre.QA_RIDDLE:
         weights: dict[str, float] = settings.L5_QA_WEIGHTS
