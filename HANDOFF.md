@@ -9,7 +9,7 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **302 passed, 10 deselected (82% coverage)** |
+| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **324 passed, 10 deselected (82% coverage)** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
 | L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
 | Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
@@ -61,7 +61,7 @@ Useful-population miss over three sessions: 27.4% -> 14.9% -> **11.2%**.
 | L5 | **done**, 4 branches | yes (test_l5.py) | **84% cov**; multi-backend (Gemini, Anthropic, OpenAI, DeepSeek, etc.); QA polarity gate; resolving_sense |
 | L6 | **done** | yes (test_l6.py) | **54% cov**; multi-backend distinctness check; paraphrase + mutual suppression + ablation; registered in runner |
 | L7 | **done** | yes (test_l7.py) | **83% cov**; psycholinguistic baseline (Kuperman AoA + metalinguistic floor) + multi-backend LLM refinement; registered in runner |
-| L8 | **stub** | none | `run_l8` raises NotImplementedError |
+| L8 | **done** | yes (test_l8.py) | **79% cov**; two-axis appropriateness (content + inference) + age verdict integration; registered in runner |
 | providers.py | **done** | yes (test_providers.py) | **73% cov**; multi-provider layer: OpenAI, DeepSeek, Gemini, Anthropic, Groq, Mistral, DashScope, Moonshot, Zhipu, SiliconFlow, Compatible |
 | runner.py | **done** | yes (test_runner.py) | **85% cov**; full pipeline registered; exception isolation verified |
 
@@ -604,10 +604,38 @@ manage this install).
   - Registered `"L7"` in `_LAYER_REGISTRY` in `src/doubletake/runner.py` between L6 and L0-post.
 - **L7 Test Suite (`tests/test_l7.py`):**
   - Added 26 unit tests covering schema validation, deterministic baseline calculations (including J01 "guts" progression across ages 6, 8, 10 and compound split autobiography), genre floor rules, multi-backend mocks (Gemini, Anthropic, OpenAI, DeepSeek), error/malformed JSON fallbacks, and full pipeline trace execution.
-- **Constraints preserved:**
-  - L8 strictly preserved as stub (`run_l8` raises `NotImplementedError`).
-  - Zero live API calls made.
 - **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **302 passed, 10 deselected (82% total coverage, L7 83% coverage)**.
+
+### 2026-09-24 — L8 appropriateness assessment implementation session (ant-core, offline, no API calls)
+
+- **L8 Appropriateness Module (`src/doubletake/l8_appropriateness.py`):**
+  - Designed and implemented two-axis developmental appropriateness assessment layer (`assess_l8`).
+  - Evaluates two independent dimensions:
+    1. **Content Appropriateness (Axis 1)**: surface topic and language (violence, death, illness, body functions, sexuality, substances, profanity, discrimination, adult themes).
+    2. **Inference Appropriateness (Axis 2)**: background knowledge, cognitive reasoning, and life experience required to understand the punchline (adult life experience, political symbolism, professional/legal/financial knowledge, abstract metaphorical reasoning).
+  - Deterministic baseline (`_deterministic_l8`): regex-based sensitive content and adult domain detection; combines with L7 comprehension results:
+    - Content inappropriate $\to$ `CONTENT_NOT_APPROPRIATE`
+    - Inference outside childhood experience $\to$ `CONTENT_OK_INFERENCE_TOO_ADVANCED`
+    - Metalinguistic skill too advanced (`WORDPLAY_SKILL_TOO_ADVANCED`) $\to$ `CONTENT_OK_INFERENCE_TOO_ADVANCED`
+    - Vocabulary too advanced (`PARTIALLY_COMPREHENSIBLE`, `SENSE_B_TOO_ADVANCED`, `AOA_UNKNOWN`) $\to$ `VOCABULARY_TOO_ADVANCED`
+    - Clean content + accessible inference + fully comprehensible $\to$ `FULLY_AGE_APPROPRIATE`.
+  - Multi-backend LLM support: structured prompt in `src/doubletake/prompts/l8_appropriateness.md` dispatchable across Gemini, Anthropic, OpenAI, DeepSeek, and other providers via `providers.py`, with automatic fallback to deterministic baseline.
+- **Config & Schema Updates:**
+  - Extended `L8Result` in `src/doubletake/schema.py` with `content_issues`, `inference_issues`, and `explanation`.
+  - Added L8 settings in `src/doubletake/config.py` (`L8_BACKEND`, `L8_MODEL`, `L8_MODEL_GEMINI`, `L8_MODEL_GEMINI_CHAIN`, `L8_MODEL_ANTHROPIC`, `L8_MODEL_OPENAI`, `L8_MODEL_DEEPSEEK`, `L8_MAX_OUTPUT_TOKENS`, `L8_CALL_PAUSE_SECONDS`).
+  - Updated `resolve_model` in `src/doubletake/providers.py` to support `"L8"`.
+- **Pipeline Integration:**
+  - Implemented `run_l8` in `src/doubletake/layers.py`:
+    - Assigns `record.l8_result`.
+    - Populates `record.final.per_age` with typed `AgeVerdict(comprehension=..., appropriateness=...)` combining L7 comprehension and L8 appropriateness.
+    - Records `LayerTrace(layer="L8", status="OK", ...)`.
+  - Registered `"L8"` in `_LAYER_REGISTRY` in `src/doubletake/runner.py` between `"L7"` and `"L0-post"`.
+- **L8 Test Suite (`tests/test_l8.py`):**
+  - Added 22 unit tests covering schema validation, deterministic baseline calculations (clean jokes, substance/violence content flags, finance/legal inference flags, wordplay alignment), multi-backend mocks (Gemini, Anthropic, OpenAI, DeepSeek), error/malformed JSON fallbacks, and full pipeline integration.
+- **Milestone Complete:**
+  - All layers (L0-pre, L1, L2, L3, L4, L5, L6, L7, L8, L0-post) are now fully implemented and integrated into the pipeline runner!
+- **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **324 passed, 10 deselected (82% total coverage, L8 79% coverage)**.
+
 
 
 

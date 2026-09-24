@@ -232,6 +232,9 @@ class L8Result(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     per_age_verdict: dict[int, AgeAppropriatenessVerdict] = Field(default_factory=dict)
+    content_issues: list[str] = Field(default_factory=list)
+    inference_issues: list[str] = Field(default_factory=list)
+    explanation: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

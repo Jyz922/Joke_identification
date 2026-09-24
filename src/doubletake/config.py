@@ -115,6 +115,17 @@ class Settings(BaseModel):
     L7_SECONDARY_SENSE_AOA_OFFSET: float = 2.0
     L7_AOA_TOLERANCE: float = 0.5
 
+    # --- L8 Appropriateness backend & models ----------------------------
+    L8_BACKEND: BackendType = "gemini"
+    L8_MODEL: str | None = None
+    L8_MODEL_GEMINI: str = "gemini-3.6-flash"
+    L8_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
+    L8_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    L8_MODEL_OPENAI: str = "gpt-4o-mini"
+    L8_MODEL_DEEPSEEK: str = "deepseek-chat"
+    L8_MAX_OUTPUT_TOKENS: int = 4096
+    L8_CALL_PAUSE_SECONDS: float = 6.0
+
     # --- Provider API keys & custom base URLs ----------------------------
     OPENAI_API_KEY: str | None = None
     DEEPSEEK_API_KEY: str | None = None

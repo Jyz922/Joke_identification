@@ -19,6 +19,7 @@ from __future__ import annotations
 import time
 
 from .config import Settings
+from .enums import AgeAppropriatenessVerdict, ComprehensionStatus, MainClassification, ScopeLabel
 from .l1_surface import analyze
 from .l2_senses import retrieve
 from .l3_candidates import rank
@@ -26,7 +27,8 @@ from .l4_anchoring import anchor_l4
 from .l5_resolution import resolve_l5
 from .l6_distinctness import distinctness_l6
 from .l7_comprehension import assess_l7
-from .schema import AnalysisRecord, L2Result, LayerTrace
+from .l8_appropriateness import assess_l8
+from .schema import AgeVerdict, AnalysisRecord, FinalVerdict, L2Result, LayerTrace
 
 
 def run_l1(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
@@ -145,4 +147,37 @@ def run_l7(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 def run_l8(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
     """L8: Two-axis appropriateness assessment (evaluated per target age)."""
-    raise NotImplementedError("L8 (appropriateness assessment) is not implemented.")
+    start = time.monotonic()
+    result = assess_l8(record, settings)
+    duration_ms = round((time.monotonic() - start) * 1000, 3)
+    record.l8_result = result
+
+    # Build per-age AgeVerdict combining L7 comprehension and L8 appropriateness
+    per_age_verdicts: dict[int, AgeVerdict] = {}
+    target_ages = record.target_ages or list(result.per_age_verdict.keys())
+    for age in target_ages:
+        comp = (
+            record.l7_result.per_age_comprehension.get(age, ComprehensionStatus.AOA_UNKNOWN)
+            if record.l7_result
+            else ComprehensionStatus.AOA_UNKNOWN
+        )
+        appr = result.per_age_verdict.get(age, AgeAppropriatenessVerdict.FULLY_AGE_APPROPRIATE)
+        per_age_verdicts[age] = AgeVerdict(comprehension=comp, appropriateness=appr)
+
+    if record.final is None:
+        record.final = FinalVerdict(
+            main_classification=MainClassification.NO_AMBIGUITY_FOUND,
+            scope_label=ScopeLabel.NO_SCOPE_MECHANISM,
+            per_age=per_age_verdicts,
+        )
+    else:
+        record.final = record.final.model_copy(update={"per_age": per_age_verdicts})
+
+    record.trace.append(LayerTrace(
+        layer="L8",
+        status="OK",
+        reason=f"ages={list(result.per_age_verdict.keys())}",
+        duration_ms=duration_ms,
+        hints_used=0,
+    ))
+    return record
