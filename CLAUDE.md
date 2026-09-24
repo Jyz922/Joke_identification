@@ -10,6 +10,19 @@
   in the current session that confirms it.
 - Never delete session-log entries.
 
+## Live-test and API-call gate (hard rule)
+
+NEVER run any of the following without explicit user approval **in the
+current turn**. All three consume paid API quota:
+
+- `py -3.11 -m pytest` without `-m "not live"`
+- `py -3.11 -m pytest -m live`
+- `py -3.11 scripts/run_l5_calibration.py` (any flags)
+
+Routine offline verification is ALWAYS:
+
+    py -3.11 -m pytest -q -m "not live"
+
 ## Project state and workflow
 
 - Project state lives in HANDOFF.md only. Do not store project status in

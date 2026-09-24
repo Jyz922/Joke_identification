@@ -28,7 +28,6 @@ from .schema import (
 )
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
-_MODEL = "claude-sonnet-4-6"  # Anthropic model; kept for anthropic backend
 _PLACEHOLDER = re.compile(r"\{(\w+)\}")
 _LOG = logging.getLogger(__name__)
 
@@ -169,6 +168,7 @@ def _make_insufficient(
 
 def _call_llm(
     prompt_text: str,
+    model: str,
     client: anthropic.Anthropic | None = None,
     *,
     required_keys: frozenset[str] | None = None,
@@ -180,7 +180,7 @@ def _call_llm(
     for attempt in range(2):
         suffix = "" if attempt == 0 else _RETRY_SUFFIX
         response = client.messages.create(
-            model=_MODEL,
+            model=model,
             max_tokens=512,
             messages=[{"role": "user", "content": prompt_text + suffix}],
         )
@@ -390,8 +390,8 @@ def _complete_json(
             prompt, response_model, required_keys, settings, client
         )
     if settings.L5_BACKEND == "anthropic":
-        result = _call_llm(prompt, client, required_keys=required_keys)
-        return result, _MODEL, False, 0
+        result = _call_llm(prompt, settings.L5_MODEL_ANTHROPIC, client, required_keys=required_keys)
+        return result, settings.L5_MODEL_ANTHROPIC, False, 0
     raise ValueError(f"Unknown L5_BACKEND: {settings.L5_BACKEND!r}")
 
 

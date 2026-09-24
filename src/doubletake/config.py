@@ -57,6 +57,7 @@ class Settings(BaseModel):
     L5_MODEL_GEMINI: str = "gemini-3.6-flash"
     # Ordered fallback chain tried after the primary exhausts its 5xx retries.
     L5_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
+    L5_MODEL_ANTHROPIC: str = "claude-sonnet-5"
 
     # --- L5 QA resolution ------------------------------------------------
     # Weights must sum to 1.0 (asserted below).
