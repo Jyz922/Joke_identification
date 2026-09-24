@@ -25,6 +25,7 @@ from .l3_candidates import rank
 from .l4_anchoring import anchor_l4
 from .l5_resolution import resolve_l5
 from .l6_distinctness import distinctness_l6
+from .l7_comprehension import assess_l7
 from .schema import AnalysisRecord, L2Result, LayerTrace
 
 
@@ -128,7 +129,18 @@ def run_l6(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 def run_l7(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
     """L7: Comprehension assessment (evaluated per target age)."""
-    raise NotImplementedError("L7 (comprehension assessment) is not implemented.")
+    start = time.monotonic()
+    result = assess_l7(record, settings)
+    duration_ms = round((time.monotonic() - start) * 1000, 3)
+    record.l7_result = result
+    record.trace.append(LayerTrace(
+        layer="L7",
+        status="OK",
+        reason=f"ages={list(result.per_age_comprehension.keys())}",
+        duration_ms=duration_ms,
+        hints_used=0,
+    ))
+    return record
 
 
 def run_l8(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:

@@ -97,6 +97,24 @@ class Settings(BaseModel):
     L6_MAX_OUTPUT_TOKENS: int = 4096
     L6_CALL_PAUSE_SECONDS: float = 6.0
 
+    # --- L7 Comprehension backend & thresholds ---------------------------
+    L7_BACKEND: BackendType = "gemini"
+    L7_MODEL: str | None = None
+    L7_MODEL_GEMINI: str = "gemini-3.6-flash"
+    L7_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
+    L7_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    L7_MODEL_OPENAI: str = "gpt-4o-mini"
+    L7_MODEL_DEEPSEEK: str = "deepseek-chat"
+    L7_MAX_OUTPUT_TOKENS: int = 4096
+    L7_CALL_PAUSE_SECONDS: float = 6.0
+
+    L7_METALINGUISTIC_FLOOR_HOMOGRAPH: float = 6.0
+    L7_METALINGUISTIC_FLOOR_DEFINITIONAL: float = 7.0
+    L7_METALINGUISTIC_FLOOR_DIALOGUE: float = 7.5
+    L7_METALINGUISTIC_FLOOR_RESEGMENTATION: float = 8.0
+    L7_SECONDARY_SENSE_AOA_OFFSET: float = 2.0
+    L7_AOA_TOLERANCE: float = 0.5
+
     # --- Provider API keys & custom base URLs ----------------------------
     OPENAI_API_KEY: str | None = None
     DEEPSEEK_API_KEY: str | None = None

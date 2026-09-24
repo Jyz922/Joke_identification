@@ -219,6 +219,11 @@ class L7Result(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     per_age_comprehension: dict[int, ComprehensionStatus] = Field(default_factory=dict)
+    sense_a_aoa: Optional[float] = None
+    sense_b_aoa: Optional[float] = None
+    compound_split_aoa: Optional[float] = None
+    metalinguistic_floor: Optional[float] = None
+    explanation: Optional[str] = None
 
 
 class L8Result(BaseModel):

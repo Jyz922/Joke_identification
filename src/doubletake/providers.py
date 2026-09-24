@@ -277,7 +277,7 @@ def resolve_model(backend: str, layer: str, settings: Any) -> str:
     # 3. Provider default
     spec = PROVIDERS.get(norm)
     if spec:
-        return spec.default_model_l4 if layer.upper() in ("L4", "L6") else spec.default_model_l5
+        return spec.default_model_l4 if layer.upper() in ("L4", "L6", "L7") else spec.default_model_l5
 
     return "gpt-4o-mini"
 

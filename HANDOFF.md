@@ -9,7 +9,7 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **276 passed, 10 deselected (81% coverage)** |
+| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **302 passed, 10 deselected (82% coverage)** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
 | L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
 | Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
@@ -60,7 +60,7 @@ Useful-population miss over three sessions: 27.4% -> 14.9% -> **11.2%**.
 | L4 | **done** | yes (test_l4.py) | **65% cov**; multi-backend (Gemini, Anthropic, OpenAI, DeepSeek, etc.); substring alignment; compound split same-span handling; registered in runner |
 | L5 | **done**, 4 branches | yes (test_l5.py) | **84% cov**; multi-backend (Gemini, Anthropic, OpenAI, DeepSeek, etc.); QA polarity gate; resolving_sense |
 | L6 | **done** | yes (test_l6.py) | **54% cov**; multi-backend distinctness check; paraphrase + mutual suppression + ablation; registered in runner |
-| L7 | **stub** | none | `run_l7` raises NotImplementedError |
+| L7 | **done** | yes (test_l7.py) | **83% cov**; psycholinguistic baseline (Kuperman AoA + metalinguistic floor) + multi-backend LLM refinement; registered in runner |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
 | providers.py | **done** | yes (test_providers.py) | **73% cov**; multi-provider layer: OpenAI, DeepSeek, Gemini, Anthropic, Groq, Mistral, DashScope, Moonshot, Zhipu, SiliconFlow, Compatible |
 | runner.py | **done** | yes (test_runner.py) | **85% cov**; full pipeline registered; exception isolation verified |
@@ -581,10 +581,34 @@ manage this install).
   - Updated `_l0_post_layer` in `runner.py`: items passing L5 whose senses are deemed `SENSES_TOO_CLOSE` by L6 are downgraded to `MainClassification.ONE_SENSE_ONLY`.
 - **L6 test suite (`tests/test_l6.py`):**
   - Added 16 unit tests covering schema validation, short-circuits, mock LLM runs (Gemini, Anthropic, OpenAI, DeepSeek), parse failure fallback, pipeline trace populating, and runner integration.
-- **Constraints preserved:**
-  - L7 and L8 strictly preserved as stubs (`run_l7`, `run_l8` raise `NotImplementedError`).
-  - Zero live API calls made.
 - **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **276 passed, 10 deselected (81% total coverage)**.
+
+### 2026-09-24 — L7 comprehension assessment implementation session (ant-core, offline, no API calls)
+
+- **L7 Comprehension Module (`src/doubletake/l7_comprehension.py`):**
+  - Designed and implemented age-differentiated comprehension assessment layer (`assess_l7`).
+  - Evaluates the 4 core psycholinguistic dimensions per `README.md`:
+    1. Sense A AoA (years)
+    2. Sense B AoA (years)
+    3. Idiom / Compound-split AoA (years)
+    4. Metalinguistic Floor (years) across genres (QA homograph: ~6.0, resegmentation: ~8.0, dialogue: ~7.5, definitional: ~7.0).
+  - Deterministic baseline (`_deterministic_l7`): combines Kuperman AoA ratings (`aoa_lookup`), content keyword extraction (`_find_keyword_aoa`), compound split part AoA, genre metalinguistic floors, and age-band tolerance (`L7_AOA_TOLERANCE=0.5`).
+  - Emits valid `ComprehensionStatus` values per age: `FULLY_COMPREHENSIBLE`, `PARTIALLY_COMPREHENSIBLE`, `SENSE_B_TOO_ADVANCED`, `WORDPLAY_SKILL_TOO_ADVANCED`, `AOA_UNKNOWN`.
+  - Multi-backend LLM refinement support: structured prompt in `src/doubletake/prompts/l7_comprehension.md` dispatchable across Gemini, Anthropic, OpenAI, DeepSeek, and OpenAI-compatible providers, with robust fallback to deterministic baseline on parse/network error.
+- **Config & Schema Updates:**
+  - Extended `L7Result` in `src/doubletake/schema.py` with optional `sense_a_aoa`, `sense_b_aoa`, `compound_split_aoa`, `metalinguistic_floor`, and `explanation`.
+  - Extended `Settings` in `src/doubletake/config.py` with L7 backend, model configurations, metalinguistic floors, and `L7_AOA_TOLERANCE`.
+  - Updated `resolve_model` in `src/doubletake/providers.py` to support `"L7"`.
+- **Pipeline Integration:**
+  - Implemented `run_l7` in `src/doubletake/layers.py` updating `record.l7_result` and logging trace with `layer="L7"`.
+  - Registered `"L7"` in `_LAYER_REGISTRY` in `src/doubletake/runner.py` between L6 and L0-post.
+- **L7 Test Suite (`tests/test_l7.py`):**
+  - Added 26 unit tests covering schema validation, deterministic baseline calculations (including J01 "guts" progression across ages 6, 8, 10 and compound split autobiography), genre floor rules, multi-backend mocks (Gemini, Anthropic, OpenAI, DeepSeek), error/malformed JSON fallbacks, and full pipeline trace execution.
+- **Constraints preserved:**
+  - L8 strictly preserved as stub (`run_l8` raises `NotImplementedError`).
+  - Zero live API calls made.
+- **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **302 passed, 10 deselected (82% total coverage, L7 83% coverage)**.
+
 
 
 
