@@ -59,6 +59,10 @@ def test_analyze_surface_flags() -> None:
     assert r.has_question and r.has_negation and not r.has_speaker_turns
 
 
+def test_curly_apostrophe_stays_in_token() -> None:
+    assert analyze("We couldn’t imagine it.").tokens[:2] == ["We", "couldn’t"]
+
+
 def test_run_l1_sets_result_and_trace() -> None:
     record = AnalysisRecord(item_id="t", text="The bank was steep.", target_ages=[8])
     record = run_l1(record, DEFAULT_SETTINGS)
