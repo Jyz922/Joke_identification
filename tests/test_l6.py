@@ -276,7 +276,7 @@ class TestL6RunnerIntegration:
         )
         rec = _l0_post_layer(rec, DEFAULT_SETTINGS)
         assert rec.final is not None
-        assert rec.final.main_classification == MainClassification.ONE_SENSE_ONLY
+        assert rec.final.main_classification == MainClassification.SENSES_TOO_CLOSE
 
     def test_l0_post_preserves_valid_joke_when_senses_distinct(self) -> None:
         rec = _make_record()

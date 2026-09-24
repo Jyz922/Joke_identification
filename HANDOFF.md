@@ -9,7 +9,7 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **324 passed, 10 deselected (82% coverage)** |
+| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **329 passed, 10 deselected (82% coverage)** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
 | L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
 | Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
@@ -634,7 +634,13 @@ manage this install).
   - Added 22 unit tests covering schema validation, deterministic baseline calculations (clean jokes, substance/violence content flags, finance/legal inference flags, wordplay alignment), multi-backend mocks (Gemini, Anthropic, OpenAI, DeepSeek), error/malformed JSON fallbacks, and full pipeline integration.
 - **Milestone Complete:**
   - All layers (L0-pre, L1, L2, L3, L4, L5, L6, L7, L8, L0-post) are now fully implemented and integrated into the pipeline runner!
-- **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **324 passed, 10 deselected (82% total coverage, L8 79% coverage)**.
+- **End-to-End System Review & Improvements:**
+  - **L6 to MainClassification alignment:** Fixed `_l0_post_layer` to assign `MainClassification.SENSES_TOO_CLOSE` instead of `ONE_SENSE_ONLY` when L6 detects overlapping senses, matching `README.md` § Main Classification.
+  - **Dynamic Confidence Scoring:** Computed `record.confidence` from L5 resolution score and downgraded by 15% when L6 skips paraphrasing (per `README.md` § L6).
+  - **Out-of-Scope Handling:** Handled `OUT_OF_SCOPE_HOMOPHONE` and `OUT_OF_SCOPE_NONLEXICAL_JOKE` mappings in `_l0_post_layer`.
+  - **Evaluation Tooling & CLI:** Implemented `evaluate_run` in `corpus.py` and `--eval <gold_path>` flag in `runner.py`, generating structured `evaluation.json` (confusion matrix, classification accuracy, age accuracy).
+  - **Corpus Coverage:** Increased `corpus.py` test coverage to 98%.
+- **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **329 passed, 10 deselected (82% total coverage)**.
 
 
 

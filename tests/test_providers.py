@@ -128,8 +128,12 @@ class TestModelResolution:
     def test_default_models(self) -> None:
         assert resolve_model("openai", "L4", DEFAULT_SETTINGS) == "gpt-4o-mini"
         assert resolve_model("openai", "L5", DEFAULT_SETTINGS) == "gpt-4o-mini"
+        assert resolve_model("openai", "L7", DEFAULT_SETTINGS) == "gpt-4o-mini"
+        assert resolve_model("openai", "L8", DEFAULT_SETTINGS) == "gpt-4o-mini"
         assert resolve_model("deepseek", "L4", DEFAULT_SETTINGS) == "deepseek-chat"
         assert resolve_model("deepseek", "L5", DEFAULT_SETTINGS) == "deepseek-chat"
+        assert resolve_model("deepseek", "L7", DEFAULT_SETTINGS) == "deepseek-chat"
+        assert resolve_model("deepseek", "L8", DEFAULT_SETTINGS) == "deepseek-chat"
 
     def test_explicit_override_in_settings(self) -> None:
         settings = Settings(L5_MODEL="custom-finetuned-l5")

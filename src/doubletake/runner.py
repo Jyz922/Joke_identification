@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import DEFAULT_SETTINGS, Settings
-from .corpus import load_blind
+from .corpus import evaluate_run, load_blind
 from .enums import AnchorRelation, AnchoringStatus, DistinctnessStatus, MainClassification, ResolutionStatus, ScopeLabel
 from .l0_scope import InputValidationError, LayerEvidence, assign_scope_label, preprocess_input
 from .layers import run_l1, run_l2, run_l3, run_l4, run_l5, run_l6, run_l7, run_l8
@@ -111,10 +111,14 @@ def _l0_post_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord
     scope_label = assign_scope_label(evidence)
 
     main_class = MainClassification.NO_AMBIGUITY_FOUND
-    if record.l5_result is not None:
+    if scope_label == ScopeLabel.OUT_OF_SCOPE_HOMOPHONE:
+        main_class = MainClassification.OUT_OF_SCOPE_HOMOPHONE
+    elif scope_label == ScopeLabel.OUT_OF_SCOPE_NONLEXICAL_JOKE:
+        main_class = MainClassification.OUT_OF_SCOPE_NONLEXICAL_JOKE
+    elif record.l5_result is not None:
         if record.l5_result.resolution_status == ResolutionStatus.RESOLUTION_PASS:
             if record.l6_result is not None and record.l6_result.distinctness_status == DistinctnessStatus.SENSES_TOO_CLOSE:
-                main_class = MainClassification.ONE_SENSE_ONLY
+                main_class = MainClassification.SENSES_TOO_CLOSE
             else:
                 main_class = (
                     MainClassification.VALID_COMPOUND_SPLIT_JOKE
@@ -128,6 +132,19 @@ def _l0_post_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord
             main_class = MainClassification.ONE_SENSE_ONLY
         elif record.l4_result.anchoring_status == AnchoringStatus.FAIL:
             main_class = MainClassification.ANCHORING_FAIL
+
+    # Confidence calculation per README § L6 (lowered when L6 paraphrase is skipped)
+    confidence: float | None = None
+    if record.l5_result is not None and record.l5_result.resolution_score is not None:
+        confidence = float(record.l5_result.resolution_score)
+        if record.l6_result is not None:
+            if record.l6_result.distinctness_status == DistinctnessStatus.L6_SKIPPED_NO_PARAPHRASE:
+                confidence = round(confidence * 0.85, 3)
+            elif record.l6_result.distinctness_status == DistinctnessStatus.SENSES_DISTINCT:
+                confidence = min(1.0, round(confidence, 3))
+    elif record.l3_result is not None and record.l3_result.candidates:
+        confidence = round(record.l3_result.candidates[0].score, 3)
+    record.confidence = confidence
 
     duration_ms = round((time.monotonic() - start) * 1000, 3)
 
@@ -227,6 +244,11 @@ def run(
             "MIN_INPUT_CHARS": settings.MIN_INPUT_CHARS,
             "MAX_NON_ASCII_RATIO": settings.MAX_NON_ASCII_RATIO,
             "L3_TOP_K": settings.L3_TOP_K,
+            "L4_BACKEND": settings.L4_BACKEND,
+            "L5_BACKEND": settings.L5_BACKEND,
+            "L6_BACKEND": settings.L6_BACKEND,
+            "L7_BACKEND": settings.L7_BACKEND,
+            "L8_BACKEND": settings.L8_BACKEND,
             "L5_QA_WEIGHTS": settings.L5_QA_WEIGHTS,
             "L5_RESOLUTION_THRESHOLDS": dict(settings.L5_RESOLUTION_THRESHOLDS),
         },
@@ -257,10 +279,23 @@ def _main(argv: list[str] | None = None) -> None:
         "--output", default="runs", metavar="DIR",
         help="Root directory for run output (default: runs).",
     )
+    parser.add_argument(
+        "--eval", default=None, metavar="GOLD_PATH",
+        help="Optional path to gold JSONL corpus to evaluate run output against.",
+    )
     args = parser.parse_args(argv)
 
     out_dir = run(blind_path=args.blind, output_root=args.output)
     print(f"Run complete. Output: {out_dir}")
+
+    if args.eval:
+        eval_res = evaluate_run(out_dir / "records.jsonl", args.eval)
+        eval_file = out_dir / "evaluation.json"
+        eval_file.write_text(json.dumps(eval_res, indent=2), encoding="utf-8")
+        print("Evaluation summary:")
+        print(f"  Classification accuracy: {eval_res['classification_accuracy']:.1%} ({eval_res['correct_classification']}/{eval_res['total_items']})")
+        print(f"  Age verdict match rate:  {eval_res['age_accuracy']:.1%} ({eval_res['correct_age_evals']}/{eval_res['total_age_evals']})")
+        print(f"  Report written to: {eval_file}")
 
 
 if __name__ == "__main__":

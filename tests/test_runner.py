@@ -10,7 +10,15 @@ from unittest.mock import patch
 import pytest
 
 from doubletake.config import DEFAULT_SETTINGS, Settings
-from doubletake.enums import AnchorRelation, AnchoringStatus, Genre, MainClassification, ScopeLabel
+from doubletake.enums import (
+    AnchorRelation,
+    AnchoringStatus,
+    DistinctnessStatus,
+    Genre,
+    MainClassification,
+    ResolutionStatus,
+    ScopeLabel,
+)
 from doubletake.layers import (
     run_l1,
     run_l2,
@@ -25,13 +33,15 @@ from doubletake.runner import (
     _LAYER_REGISTRY,
     _l0_post_layer,
     _l0_pre_layer,
+    _main,
     clear_registry,
     register_layer,
     run,
 )
-from doubletake.schema import AnalysisRecord, L4Result, LayerTrace
+from doubletake.schema import AnalysisRecord, FinalVerdict, L4Result, L5QAResult, L6Result, LayerTrace
 
 _SAMPLE_BLIND = Path(__file__).parent / "fixtures" / "sample_blind.jsonl"
+_SAMPLE_GOLD = Path(__file__).parent / "fixtures" / "sample_gold.jsonl"
 
 
 class TestRunnerPipeline:
@@ -61,24 +71,39 @@ class TestRunnerPipeline:
         assert first["final"] is not None
         assert first["final"]["scope_label"] in [s.value for s in ScopeLabel]
 
-        # Traces confirm L0-pre, L1, L2, L3, L5, L0-post all ran
+        # Traces confirm all pipeline layers ran
         trace_layers = [t["layer"] for t in first["trace"]]
         assert "L0-pre" in trace_layers
         assert "L1" in trace_layers
         assert "L2" in trace_layers
         assert "L3" in trace_layers
+        assert "L4" in trace_layers
         assert "L5" in trace_layers
+        assert "L6" in trace_layers
+        assert "L7" in trace_layers
+        assert "L8" in trace_layers
         assert "L0-post" in trace_layers
-
-        # L5 fails gracefully because L4 is not yet implemented
-        l5_trace = next(t for t in first["trace"] if t["layer"] == "L5")
-        assert l5_trace["status"] == "ERROR"
-        assert "ValueError" in l5_trace["reason"]
 
         # Meta snapshot
         meta = json.loads(meta_file.read_text(encoding="utf-8"))
         assert "git_sha" in meta
         assert "config" in meta
+
+    def test_run_with_eval_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        out_root = tmp_path / "runs"
+        _main([
+            "--blind", str(_SAMPLE_BLIND),
+            "--eval", str(_SAMPLE_GOLD),
+            "--output", str(out_root),
+        ])
+        captured = capsys.readouterr().out
+        assert "Run complete" in captured
+        assert "Evaluation summary" in captured
+        eval_files = list(out_root.glob("*/evaluation.json"))
+        assert len(eval_files) == 1
+        eval_data = json.loads(eval_files[0].read_text(encoding="utf-8"))
+        assert eval_data["total_items"] == 3
+        assert "confusion_matrix" in eval_data
 
     def test_runner_catches_layer_exceptions_and_continues(self, tmp_path: Path) -> None:
         """Issue e: runner catches any layer exception and records LayerTrace(status='ERROR')."""
@@ -174,3 +199,29 @@ class TestL0PostEvidenceHandling:
         rec = _l0_post_layer(rec, DEFAULT_SETTINGS)
         assert rec.final is not None
         assert rec.final.scope_label == ScopeLabel.HOMOGRAPH
+
+    def test_l0_post_assigns_confidence_score(self) -> None:
+        rec = AnalysisRecord(item_id="conf_test", text="test text", target_ages=[8])
+        rec.l5_result = L5QAResult(
+            genre=Genre.QA_RIDDLE,
+            resolution_status=ResolutionStatus.RESOLUTION_PASS,
+            resolution_score=0.90,
+            subscores={"polarity_or_direction": 0.9},
+        )
+        rec.l6_result = L6Result(
+            distinctness_status=DistinctnessStatus.L6_SKIPPED_NO_PARAPHRASE,
+        )
+        rec = _l0_post_layer(rec, DEFAULT_SETTINGS)
+        assert rec.confidence is not None
+        assert rec.confidence == round(0.90 * 0.85, 3)
+
+    def test_l0_post_handles_out_of_scope(self) -> None:
+        from doubletake.l0_scope import LayerEvidence, assign_scope_label
+        rec = AnalysisRecord(item_id="oos_test", text="homophone joke", target_ages=[8])
+        evidence = LayerEvidence(is_homophone=True, has_homograph=False)
+        rec.final = FinalVerdict(
+            main_classification=MainClassification.OUT_OF_SCOPE_HOMOPHONE,
+            scope_label=assign_scope_label(evidence),
+        )
+        rec = _l0_post_layer(rec, DEFAULT_SETTINGS)
+        assert rec.final.scope_label in (ScopeLabel.OUT_OF_SCOPE_HOMOPHONE, ScopeLabel.NO_SCOPE_MECHANISM)

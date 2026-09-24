@@ -183,3 +183,37 @@ def test_join_blind_gold_rejects_gold_id_absent_from_blind(tmp_path) -> None:
     gold = load_gold(gold_file)
     with pytest.raises(ValueError, match="Gold ids not found in blind"):
         join_blind_gold(blind, gold)
+
+
+def test_join_blind_gold_success(tmp_path) -> None:
+    blind_file = tmp_path / "blind.jsonl"
+    blind_file.write_text(
+        '\n{"id":"J01","text":"Why don\'t skeletons fight?","target_ages":[8]}\n\n',
+        encoding="utf-8",
+    )
+    gold_file = tmp_path / "gold.jsonl"
+    gold_file.write_text(
+        '\n{"id":"J01","gold_label":"VALID_HOMOGRAPH_JOKE","genre":"QA_RIDDLE",'
+        '"ambiguous_term":"guts","sense_a":"organs","sense_b":"courage",'
+        '"expected_age_verdict":{"8":"FULLY_AGE_APPROPRIATE"}}\n\n',
+        encoding="utf-8",
+    )
+    blind = load_blind(blind_file)
+    gold = load_gold(gold_file)
+    pairs = join_blind_gold(blind, gold)
+    assert len(pairs) == 1
+    assert pairs[0][0].id == "J01"
+    assert pairs[0][1].id == "J01"
+
+
+def test_load_gold_rejects_duplicate_id(tmp_path) -> None:
+    gold_file = tmp_path / "gold.jsonl"
+    gold_line = (
+        '{"id":"J01","gold_label":"VALID_HOMOGRAPH_JOKE","genre":"QA_RIDDLE",'
+        '"ambiguous_term":"guts","sense_a":"organs","sense_b":"courage",'
+        '"expected_age_verdict":{"8":"FULLY_AGE_APPROPRIATE"}}\n'
+    )
+    gold_file.write_text(gold_line + gold_line, encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate id"):
+        load_gold(gold_file)
+
