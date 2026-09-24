@@ -55,6 +55,14 @@ class Settings(BaseModel):
     # candidate score — see module docstring, deviation 1.
     L3_TOP_K: int = 3
 
+    # --- L4 backend ------------------------------------------------------
+    L4_BACKEND: Literal["gemini", "anthropic"] = "gemini"
+    L4_MODEL_GEMINI: str = "gemini-3.6-flash"
+    L4_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
+    L4_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    L4_MAX_OUTPUT_TOKENS: int = 4096
+    L4_CALL_PAUSE_SECONDS: float = 6.0
+
     # --- L5 backend ------------------------------------------------------
     L5_BACKEND: Literal["gemini", "anthropic"] = "gemini"
     # Pin exact IDs — never use -latest aliases; availability varies by account age.

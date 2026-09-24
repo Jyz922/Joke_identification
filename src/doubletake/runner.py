@@ -37,7 +37,7 @@ from .config import DEFAULT_SETTINGS, Settings
 from .corpus import load_blind
 from .enums import AnchorRelation, AnchoringStatus, MainClassification, ResolutionStatus, ScopeLabel
 from .l0_scope import InputValidationError, LayerEvidence, assign_scope_label, preprocess_input
-from .layers import run_l1, run_l2, run_l3, run_l5
+from .layers import run_l1, run_l2, run_l3, run_l4, run_l5
 from .schema import AnalysisRecord, FinalVerdict, LayerTrace
 
 
@@ -153,6 +153,7 @@ register_layer("L0-pre", _l0_pre_layer)
 register_layer("L1", run_l1)
 register_layer("L2", run_l2)
 register_layer("L3", run_l3)
+register_layer("L4", run_l4)
 register_layer("L5", run_l5)
 register_layer("L0-post", _l0_post_layer)
 

@@ -22,6 +22,7 @@ from .config import Settings
 from .l1_surface import analyze
 from .l2_senses import retrieve
 from .l3_candidates import rank
+from .l4_anchoring import anchor_l4
 from .l5_resolution import resolve_l5
 from .schema import AnalysisRecord, L2Result, LayerTrace
 
@@ -76,7 +77,20 @@ def run_l3(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 def run_l4(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
     """L4: Sense anchoring — evidence that two meanings are active in the text."""
-    raise NotImplementedError("L4 (sense anchoring) is not implemented.")
+    if record.l1_result is None:
+        raise ValueError("L1 must run before L4: l1_result is None")
+    start = time.monotonic()
+    result = anchor_l4(record, settings)
+    duration_ms = round((time.monotonic() - start) * 1000, 3)
+    record.l4_result = result
+    record.trace.append(LayerTrace(
+        layer="L4",
+        status="OK",
+        reason=f"status={result.anchoring_status} rel={result.anchor_relation}",
+        duration_ms=duration_ms,
+        hints_used=0,
+    ))
+    return record
 
 
 def run_l5(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:

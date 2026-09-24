@@ -9,7 +9,7 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **209 passed, 10 deselected (92% coverage)** |
+| Offline suite | `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` | **235 passed, 10 deselected (89% coverage)** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
 | L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
 | Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
@@ -57,12 +57,12 @@ Useful-population miss over three sessions: 27.4% -> 14.9% -> **11.2%**.
 | L1 | **done** | yes (test_l1.py) | **100% cov**; regex-only genre routing; registered in runner |
 | L2 | **done** | yes (test_l2.py) | **93% cov**; WordNet + SemCor counts + Kuperman AoA; registered in runner |
 | L3 | **done** | yes (test_l3.py) | **95% cov**; CandidateEntry carries sense_a_id and sense_b_id; registered in runner |
-| L4 | **stub** | none | `run_l4` raises NotImplementedError |
+| L4 | **done** | yes (test_l4.py) | **72% cov**; Gemini structured outputs / Anthropic fallback; substring alignment; compound split same-span handling; registered in runner |
 | L5 | **done**, 4 branches | yes (test_l5.py) | **89% cov**; QA polarity gate added (fails if polarity < 0.25); resolving_sense |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
-| runner.py | **done** | yes (test_runner.py) | **82% cov** (was 0%); full pipeline registered; exception isolation verified |
+| runner.py | **done** | yes (test_runner.py) | **83% cov**; full pipeline registered; exception isolation verified |
 
 ---
 
@@ -521,3 +521,22 @@ manage this install).
 - **README drift test:** added `test_readme_contains_all_status_strings` to `tests/test_enums.py` to ensure enum status strings are present in `README.md` (resolving issue c).
 - **Dependencies:** added `pytest-cov>=4` to `[project.optional-dependencies].test` in `pyproject.toml` (resolving issue l).
 - **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **209 passed, 10 deselected** (start: 189). Overall codebase coverage increased from 85% to **92%**. No live tests, no API calls.
+
+### 2026-09-24 — L4 sense-anchoring implementation session (ant-core, offline, no API calls)
+
+- **L4 Sense Anchoring module (`src/doubletake/l4_anchoring.py`):**
+  - Designed and implemented structured sense anchoring layer following schema `L4Result` (`sense_a`, `sense_a_anchor_quote`, `sense_b`, `sense_b_anchor_quote`, `anchor_relation`, `anchoring_status`, `resolving_sense`).
+  - Added structured-output prompt template in `src/doubletake/prompts/l4_anchoring.md`.
+  - Added L4 configuration settings in `src/doubletake/config.py` (`L4_BACKEND`, `L4_MODEL_GEMINI`, `L4_MODEL_GEMINI_CHAIN`, `L4_MODEL_ANTHROPIC`, `L4_MAX_OUTPUT_TOKENS`, `L4_CALL_PAUSE_SECONDS`).
+  - Implemented exact substring alignment with robust stripping and fallback logic (`_align_substring`).
+  - Implemented same-span check: identical anchor spans are legal if and only if `anchor_relation == RESEGMENTATION`; otherwise they correctly map to `ONE_SENSE_ONLY`.
+  - Enforced `resolving_sense` requirement: non-null only when `anchoring_status == PASS`.
+  - Integrated `run_l4` into `src/doubletake/layers.py` and registered `"L4"` in `_LAYER_REGISTRY` in `runner.py`.
+- **L4 test suite (`tests/test_l4.py`):**
+  - Added 26 unit tests covering schema validation, substring matching, mock Gemini/Anthropic client response extraction, genre-based relation defaulting, fallback handling, and pipeline record trace updates.
+  - Parameterized test over all 10 fixtures in `tests/fixtures/l5_anchors.jsonl` verifying correct parse and structural compliance for S1, S2, E1, X1, A1, D1, P1, P2, P3, N1.
+- **Constraints preserved:**
+  - L7 and L8 strictly preserved as stubs (`run_l7`, `run_l8` raise `NotImplementedError`).
+  - Zero live API calls made; all testing performed offline using mocks and cached fixtures.
+- **Verified this session:** `.venv/bin/python -m pytest --cov=doubletake -q -m "not live"` -> **235 passed, 10 deselected (89% total coverage, L4 72% coverage)**.
+
