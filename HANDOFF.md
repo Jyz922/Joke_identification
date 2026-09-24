@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-23 by daren-l5 X1 replacement session
+Last updated: 2026-09-24 by daren-l5 INSUFFICIENT_CONTEXT root-cause session
 
 ---
 
@@ -166,15 +166,37 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-**Calibration (blocked on quota).**
+**Run the calibration — the cap fix is applied and verified. Owner (Daren) runs it.**
 
-The Gemini free-tier daily quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20 req/day for `gemini-3.6-flash`) was exhausted in the previous session. The calibration run made ~19 API calls, all of which returned 429.
+Root cause (all-INSUFFICIENT_CONTEXT run) was `max_output_tokens=512`: Gemini 3.x
+counts thinking tokens against it, thinking (487–969 observed) consumed the budget,
+JSON truncated mid-emit and was misread as a parse failure. FIXED in commit
+`d241418`:
 
-Steps when quota resets (midnight Pacific):
-1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available
-2. `py -3.11 scripts/run_l5_calibration.py --resume` — picks up where it left off (1 row already in JSONL for N1 run=0)
+- `L5_MAX_OUTPUT_TOKENS = 8192` (config.py). Verified live: S1 at 8192 → `STOP`,
+  thoughts=914, output=62, valid JSON. Three thinking samples (487/969/914) all
+  clear 8192 with ~7200 headroom.
+- `ResolutionStatus.TRUNCATED_OUTPUT` added. `finish_reason==MAX_TOKENS` now returns
+  it distinctly (ERROR-logged with item + thoughts count), never again masquerading
+  as a model verdict. Offline test covers it.
+- Calibration now records `finish_reason` + `thoughts_token_count` per row and the
+  raw file persists the actual `response.text`; report has a thinking-distribution
+  section to prove the cap held.
 
-After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
+Steps:
+1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available.
+2. `py -3.11 scripts/run_l5_calibration.py --fresh` — the existing
+   `runs/l5_calibration.jsonl` holds 45 stale all-INSUFFICIENT rows from the buggy
+   run; use `--fresh` (not `--resume`) so they don't poison the report. **API-gated:
+   needs explicit approval per HANDOFF live-call rule.**
+3. Review `docs/L5_CALIBRATION.md` — note that the currently-uncommitted version of
+   this file is the STALE buggy report (all INSUFFICIENT); the fresh run overwrites it.
+
+The AFC warning printed by the SDK is a RED HERRING: `function_calls=None`,
+`automatic_function_calling_history=[]`. Not related to the failure.
+
+After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA
+retriever) per the agreed build order.
 
 ---
 
@@ -187,6 +209,103 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
 ## Session log
 
 *(append-only — never rewrite old entries)*
+
+### 2026-09-24 — Cap fix + truncation surfacing (daren-l5), commit d241418
+
+Follows the root-cause session below. Applied the production fix and made truncation
+a first-class outcome.
+
+- `config.py`: `L5_MAX_OUTPUT_TOKENS = 8192` (was hardcoded 512 in
+  `_call_gemini_single`). Rationale in-code: thinking is charged against the cap and
+  varies 2x; 8192 clears the worst observed (969) with wide margin. Chose raise-the-cap
+  over `ThinkingConfig` deliberately — thinking is likely what separates the polarity
+  minimal pair; not cutting it to save tokens we don't pay for.
+- `enums.py`: added `ResolutionStatus.TRUNCATED_OUTPUT`. (test_enums.py unaffected — it
+  only checks README strings ⊆ enum values; no consumer branches on the status, only
+  layers.py interpolates it into a trace string.)
+- `l5_resolution.py`:
+  - `_call_gemini_single` now takes `max_output_tokens`; detects
+    `finish_reason==MAX_TOKENS` right after the call and returns `truncated=True`
+    WITHOUT a parse retry (retrying just truncates again).
+  - Introduced `_L5Call` NamedTuple (parsed, model_used, fallback_used, retries,
+    truncated, thoughts_tokens) as the chain/dispatcher return, replacing the growing
+    tuple. `_call_gemini_with_chain`/`_complete_json` return it; truncation short-circuits
+    the fallback chain (switching models won't fix a cap hit).
+  - `resolve_l5`: on `truncated`, logs ERROR (item_id + thoughts_token_count + model +
+    cap) and returns `_empty_result(status=TRUNCATED_OUTPUT)`. Renamed
+    `_make_insufficient` → `_empty_result(status=...)` (default INSUFFICIENT_CONTEXT).
+  - Diagnostics sink now also carries `thoughts_tokens`.
+- `scripts/run_l5_calibration.py`: JSONL row + raw file record `finish_reason` and
+  `thoughts_token_count`; raw file persists verbatim `response.text` (fix from prior
+  entry). Added report section "7b. Thinking tokens & truncation" (finish_reason counts,
+  thoughts min/max/mean, cap-headroom / MAX_TOKENS warning).
+- `tests/test_l5.py`: `test_max_tokens_yields_truncated_not_insufficient` — mocked
+  MAX_TOKENS response → TRUNCATED_OUTPUT (not INSUFFICIENT), score None, exactly one
+  `generate_content` call (no parse retry).
+- `scripts/debug_one_call.py`: default cap now reads `L5_MAX_OUTPUT_TOKENS` so it mirrors
+  production.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` → **121 passed, 10
+deselected**. One live S1 call at cap 8192 → `finish_reason=STOP`, thoughts=914,
+output=62, valid JSON, would score → RESOLUTION_PASS.
+
+**NOT done (owner's call, API-gated):** the calibration run itself. Existing
+`runs/l5_calibration.jsonl` has 45 stale all-INSUFFICIENT rows — use `--fresh`.
+`docs/L5_CALIBRATION.md` is uncommitted and holds the stale buggy report; left as-is,
+the fresh run overwrites it.
+
+### 2026-09-24 — INSUFFICIENT_CONTEXT root-cause session (daren-l5)
+
+**Root cause of the all-45-INSUFFICIENT_CONTEXT calibration run — FOUND and VERIFIED (2 live S1 calls):**
+
+- `max_output_tokens=512` in `_call_gemini_single`'s `GenerateContentConfig` is too
+  small. Gemini 3.x counts internal **thinking tokens** against that cap. Thinking
+  consumed the budget → `finish_reason=MAX_TOKENS` → `response.text` truncated mid-JSON
+  (`'{\n  "polarity_or'`, 16 chars) → `JSONDecodeError` → both parse attempts fail →
+  INSUFFICIENT_CONTEXT.
+- Verified via new `scripts/debug_one_call.py` (reproduces the exact production config,
+  dumps the untouched response):
+  - cap 512:  `MAX_TOKENS`, thoughts=487, candidates=7, text=16 chars → fails.
+  - cap 2048: `STOP`, full valid JSON, parses, score 0.67 → RESOLUTION_PASS (expected).
+  - thinking tokens varied 487 → 969 between two identical temp-0 calls — cost is
+    variable; cap must clear the worst case.
+
+**Corrected `retries` semantics (this misreading cost the prior session):**
+
+- `retries` counts **only 5xx backoff sleeps** (`_call_gemini_single` line ~297). It is
+  NOT incremented by the JSON-parse / missing-field retry (the inner `parse_attempt`
+  loop). Therefore `retries=0` does NOT mean "the missing-subscore retry never ran" —
+  that retry DID run (both attempts) and both failed on truncated JSON. The prior
+  handoff's inference from `retries=0` was wrong.
+- The parse-failure path to INSUFFICIENT_CONTEXT: `_call_gemini_single` returns
+  `(None, 0, None)` → `_call_gemini_with_chain` returns `(None, model, False, 0)` (skips
+  fallback, correct) → `resolve_l5` calls `_make_insufficient(..., retries=0)`.
+
+**Offline fix applied — raw-response logger (was writing garbage):**
+
+- The old `runs/raw/*.json` files contained `result.subscores` (i.e. `{}` for every
+  INSUFFICIENT_CONTEXT) — NOT the model's response. 45 paid calls produced zero usable
+  evidence of what Gemini returned.
+- Fix: added optional `diagnostics: dict` sink threaded through `resolve_l5` →
+  `_complete_json` → `_call_gemini_with_chain` → `_call_gemini_single`. The Gemini path
+  fills it with verbatim `raw_text` and `finish_reason`. Deliberately NOT added to the
+  frozen `L5Result` (would bloat every serialized blind-run record). All new params
+  default `None` → backward-compatible.
+- `run_l5_calibration.py`: raw file now persists `{raw_text, finish_reason, subscores}`;
+  JSONL row now includes `finish_reason`.
+- `scripts/debug_one_call.py` added (one-call diagnostic; prints finish_reason,
+  usage_metadata incl. thoughts_token_count, len(text), verbatim text, parts,
+  function_calls).
+
+**NOT done (awaiting decision):** the production `max_output_tokens` cap fix itself.
+One variable at a time — raise cap vs. set `thinking_budget` is an open choice. See
+Next action.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` → **120 passed, 10
+deselected**. Two live S1 debug calls (cap 512 fails, cap 2048 passes).
+
+**Unrelated:** upgraded Claude Code CLI 2.1.170 → 2.1.282 (npm global; winget does not
+manage this install).
 
 ### 2026-09-21 — Audit session
 - First session to produce HANDOFF.md; no prior handoff existed
