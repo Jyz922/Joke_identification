@@ -18,7 +18,7 @@ from .enums import Genre
 from .schema import L1Result
 
 _SPEAKER = re.compile(r"(?:^|[.!?]\s+)[A-Z][a-z]+:\s")
-_DEFINITION = re.compile(r"^\s*[A-Z][\w'-]*(?:\s+[\w'-]+){0,2}:\s")
+_DEFINITION = re.compile(r"^\s*[A-Z][\w'’-]*(?:\s+[\w'’-]+){0,2}:\s")
 _WH_QUESTION = re.compile(r"^\s*(?:why|what|how|where|when|who|whom|whose|which)\b[^?]*\?", re.I)
 _TOKEN = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")  # ' or ’ (jokes.json uses ’)
 _NEGATION = re.compile(r"\b(?:not|no|never|nothing|nobody|none)\b|n['’]t\b", re.I)

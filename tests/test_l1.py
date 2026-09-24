@@ -70,3 +70,30 @@ def test_run_l1_sets_result_and_trace() -> None:
     record = run_l1(record, DEFAULT_SETTINGS)
     assert record.l1_result.genre == Genre.DECLARATIVE
     assert record.trace[-1].layer == "L1"
+
+
+# Real strings from jokes.json, which uses U+2019 (’), not ASCII '.
+_CURLY = [t for t in _corpus("jokes.json") if "’" in t]
+
+
+def test_corpus_really_uses_curly_apostrophes() -> None:
+    assert len(_CURLY) == 3
+
+
+@pytest.mark.parametrize("text", _CURLY)
+def test_curly_and_ascii_apostrophes_analyze_identically(text: str) -> None:
+    curly, ascii_ = analyze(text), analyze(text.replace("’", "'"))
+    assert curly.genre == ascii_.genre
+    assert curly.has_negation == ascii_.has_negation
+    assert [t.replace("’", "'") for t in curly.tokens] == ascii_.tokens
+
+
+def test_negation_on_real_curly_strings() -> None:
+    by_word = {w: t for t in _CURLY for w in ("couldn’t", "isn’t", "Dan’s") if w in t}
+    assert analyze(by_word["couldn’t"]).has_negation
+    assert analyze(by_word["isn’t"]).has_negation
+    assert not analyze(by_word["Dan’s"]).has_negation  # possessive, not negation
+
+
+def test_definition_head_with_curly_apostrophe() -> None:
+    assert route_genre("Cat’s cradle: a game of string.") == Genre.DEFINITIONAL_ONELINER

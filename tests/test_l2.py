@@ -88,3 +88,9 @@ def test_retrieve_tags_mwe_senses() -> None:
     senses = retrieve(["liquid", "assets"])
     mwe = [s for s in senses if s.source == "wordnet_mwe:liquid_assets"]
     assert mwe and {s.term for s in mwe} == {"liquid assets"}
+
+
+@pytest.mark.parametrize("apos", ["'", "’"])
+def test_possessives_reach_l2_with_either_apostrophe(apos: str) -> None:
+    terms = {s.term for s in retrieve(["the", f"car{apos}s", "trunk", f"don{apos}t"])}
+    assert terms == {"car", "trunk"}

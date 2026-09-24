@@ -236,7 +236,9 @@ def retrieve(tokens: list[str]) -> list[SenseEntry]:
         out += senses_for(key, term=phrase.lower(), source=f"wordnet_mwe:{key}")
     seen: set[str] = set()
     for tok in tokens:
-        t = tok.lower()
+        # Possessive 's / ’s -> the noun (car's, Dan’s). Contractions (don’t)
+        # stay non-alpha and are skipped below as function words.
+        t = re.sub(r"['’]s?$", "", tok.lower())
         if t in seen or t in STOPWORDS or not t.isalpha():
             continue
         seen.add(t)
