@@ -77,3 +77,18 @@ def test_mwe_is_a_candidate() -> None:
     fx = _FIXTURES["P3"]
     terms = [c.term for c in rank(retrieve(analyze(fx["text"]).tokens), 99).candidates]
     assert "pull yourself together" in terms
+
+
+def test_candidate_carries_sense_ids() -> None:
+    # Homograph with contrast carries two sense IDs
+    cands = rank(retrieve(["guts"]), 1).candidates
+    assert cands[0].term == "guts"
+    assert cands[0].sense_a_id is not None
+    assert cands[0].sense_b_id is not None
+    assert cands[0].sense_a_id != cands[0].sense_b_id
+
+    # Compound split candidate carries both senses
+    auto_cands = rank(retrieve(["autobiography"]), 3).candidates
+    auto = next(c for c in auto_cands if c.term == "autobiography")
+    assert auto.sense_a_id is not None
+    assert auto.sense_b_id is not None

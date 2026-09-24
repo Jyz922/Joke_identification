@@ -41,7 +41,15 @@ def _top(senses: list[SenseEntry]) -> SenseEntry:
     return max(senses, key=_count)
 
 
-def _entry(term: str, contrast: bool, c1: int, c2: int, split: bool) -> CandidateEntry:
+def _entry(
+    term: str,
+    contrast: bool,
+    c1: int,
+    c2: int,
+    split: bool,
+    sense_a_id: str | None = None,
+    sense_b_id: str | None = None,
+) -> CandidateEntry:
     balance = (c2 + 1) / (c1 + 1) if contrast else 0.0
     return CandidateEntry(
         term=term,
@@ -51,6 +59,8 @@ def _entry(term: str, contrast: bool, c1: int, c2: int, split: bool) -> Candidat
             "top_count": float(c1), "contrast_count": float(c2),
             "compound_split": float(split),
         },
+        sense_a_id=sense_a_id,
+        sense_b_id=sense_b_id,
     )
 
 
@@ -58,8 +68,12 @@ def _homograph(term: str, whole: list[SenseEntry]) -> CandidateEntry:
     top = _top(whole)
     others = [s for s in whole if s.lexname != top.lexname]
     if not others:
-        return _entry(term, False, _count(top), 0, split=False)
-    return _entry(term, True, _count(top), _count(_top(others)), split=False)
+        return _entry(term, False, _count(top), 0, split=False, sense_a_id=top.sense_id)
+    top_other = _top(others)
+    return _entry(
+        term, True, _count(top), _count(top_other), split=False,
+        sense_a_id=top.sense_id, sense_b_id=top_other.sense_id,
+    )
 
 
 def _split(term: str, source: str, whole: list[SenseEntry], parts: list[SenseEntry]) -> CandidateEntry | None:
@@ -73,9 +87,15 @@ def _split(term: str, source: str, whole: list[SenseEntry], parts: list[SenseEnt
         if not mine:
             return None
         tops.append(_top(mine))
-    contrast = any(t.lexname != _top(whole).lexname for t in tops)
+    whole_top = _top(whole)
+    contrast_parts = [t for t in tops if t.lexname != whole_top.lexname]
+    contrast = bool(contrast_parts)
     c1, c2 = sorted((_count(t) for t in tops), reverse=True)
-    return _entry(term, contrast, c1, c2, split=True)
+    other_sense_id = contrast_parts[0].sense_id if contrast_parts else tops[0].sense_id
+    return _entry(
+        term, contrast, c1, c2, split=True,
+        sense_a_id=whole_top.sense_id, sense_b_id=other_sense_id,
+    )
 
 
 def _mwe(phrase: str, mwe: list[SenseEntry], whole: dict[str, list[SenseEntry]]) -> CandidateEntry | None:
@@ -87,7 +107,10 @@ def _mwe(phrase: str, mwe: list[SenseEntry], whole: dict[str, list[SenseEntry]])
     contrasting = [t for t in literal if t.lexname != top.lexname]
     other = _top(contrasting) if contrasting else _top(literal)
     c1, c2 = sorted((_count(top), _count(other)), reverse=True)
-    return _entry(phrase, bool(contrasting), c1, c2, split=False)
+    return _entry(
+        phrase, bool(contrasting), c1, c2, split=False,
+        sense_a_id=top.sense_id, sense_b_id=other.sense_id,
+    )
 
 
 def rank(senses: list[SenseEntry], top_k: int) -> L3Result:

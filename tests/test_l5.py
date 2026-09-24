@@ -257,6 +257,22 @@ class TestResolveL5Offline:
         assert isinstance(result, L5QAResult)
         assert result.resolution_status == ResolutionStatus.RESOLUTION_FAIL
 
+    def test_qa_fail_when_polarity_is_zero_despite_other_high_subscores(self) -> None:
+        """Contradicted polarity cannot PASS even if other subscores sum to > threshold (0.55 >= 0.46)."""
+        record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
+        payload = json.dumps({
+            "polarity_or_direction": 0.0, "answer_relevance": 1.0,
+            "causal": 1.0, "agent": 1.0, "tense_aspect": 1.0,
+            "reasoning": "Contradicted polarity.",
+        })
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS,
+            ambiguous_term="guts", client=_mock_client([payload]),
+        )
+        assert isinstance(result, L5QAResult)
+        assert result.resolution_score == 0.55  # 0.45*0 + 0.25*1 + 0.15*1 + 0.10*1 + 0.05*1
+        assert result.resolution_status == ResolutionStatus.RESOLUTION_FAIL
+
     def test_definitional_pass_same_span_anchor_allowed(self) -> None:
         """Resegmentation items have identical anchor quotes — must not be penalised."""
         record = _make_record(self._DEF_TEXT, Genre.DEFINITIONAL_ONELINER, self._definitional_l4())

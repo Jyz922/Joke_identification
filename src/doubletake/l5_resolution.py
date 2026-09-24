@@ -164,7 +164,15 @@ def _weighted_score(subscores: dict[str, float], weights: dict[str, float]) -> f
     return sum(subscores.get(k, 0.0) * w for k, w in weights.items())
 
 
-def _resolution_status(score: float, threshold: float) -> ResolutionStatus:
+def _resolution_status(
+    score: float,
+    threshold: float,
+    *,
+    min_polarity: float | None = None,
+    polarity: float | None = None,
+) -> ResolutionStatus:
+    if min_polarity is not None and polarity is not None and polarity < min_polarity:
+        return ResolutionStatus.RESOLUTION_FAIL
     return (
         ResolutionStatus.RESOLUTION_PASS
         if score >= threshold
@@ -602,7 +610,12 @@ def resolve_l5(
     if genre == Genre.QA_RIDDLE:
         return L5QAResult(
             genre=Genre.QA_RIDDLE,
-            resolution_status=_resolution_status(score, settings.L5_RESOLUTION_THRESHOLDS[genre]),
+            resolution_status=_resolution_status(
+                score,
+                settings.L5_RESOLUTION_THRESHOLDS[genre],
+                min_polarity=0.25,
+                polarity=subscores.get("polarity_or_direction"),
+            ),
             **kw,
         )
     if genre == Genre.DEFINITIONAL_ONELINER:

@@ -22,6 +22,11 @@ class TestPreprocessInput:
         result = preprocess_input("Why don't skeletons fight?")
         assert result == "Why don't skeletons fight?"
 
+    @pytest.mark.parametrize("bad_input", [123, None, [], {"text": "hello"}])
+    def test_rejects_non_string_input(self, bad_input: object) -> None:
+        with pytest.raises(InputValidationError, match="Expected str"):
+            preprocess_input(bad_input)  # type: ignore[arg-type]
+
     def test_strips_leading_trailing_whitespace(self) -> None:
         assert preprocess_input("  hello  ") == "hello"
 

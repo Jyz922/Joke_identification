@@ -55,6 +55,8 @@ class CandidateEntry(BaseModel):
     term: str
     score: float
     score_components: dict[str, float] = Field(default_factory=dict)
+    sense_a_id: Optional[str] = None
+    sense_b_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

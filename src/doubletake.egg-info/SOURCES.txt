@@ -5,6 +5,10 @@ src/doubletake/config.py
 src/doubletake/corpus.py
 src/doubletake/enums.py
 src/doubletake/l0_scope.py
+src/doubletake/l1_surface.py
+src/doubletake/l2_senses.py
+src/doubletake/l3_candidates.py
+src/doubletake/l5_resolution.py
 src/doubletake/layers.py
 src/doubletake/runner.py
 src/doubletake/schema.py
@@ -15,4 +19,9 @@ src/doubletake.egg-info/requires.txt
 src/doubletake.egg-info/top_level.txt
 tests/test_enums.py
 tests/test_l0.py
+tests/test_l1.py
+tests/test_l2.py
+tests/test_l3.py
+tests/test_l5.py
+tests/test_l5_missing_subscores.py
 tests/test_schema.py

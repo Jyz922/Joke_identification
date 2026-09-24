@@ -96,3 +96,13 @@ def test_readme_status_string_in_enum(status_string: str) -> None:
         f"Status string '{status_string}' appears in README but is missing "
         "from enums.py."
     )
+
+
+def test_readme_contains_all_status_strings() -> None:
+    """Detect README drift: assert every expected status string appears in README.md."""
+    from pathlib import Path
+    readme_path = Path(__file__).resolve().parents[1] / "README.md"
+    assert readme_path.exists()
+    content = readme_path.read_text(encoding="utf-8")
+    for s in _README_STATUS_STRINGS:
+        assert s in content, f"Status string '{s}' expected in README.md but missing"

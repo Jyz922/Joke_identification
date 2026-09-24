@@ -35,9 +35,9 @@ from typing import Callable
 
 from .config import DEFAULT_SETTINGS, Settings
 from .corpus import load_blind
-from .enums import MainClassification
+from .enums import AnchorRelation, AnchoringStatus, MainClassification, ResolutionStatus, ScopeLabel
 from .l0_scope import InputValidationError, LayerEvidence, assign_scope_label, preprocess_input
-from .layers import run_l5
+from .layers import run_l1, run_l2, run_l3, run_l5
 from .schema import AnalysisRecord, FinalVerdict, LayerTrace
 
 
@@ -85,33 +85,59 @@ def _l0_pre_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
 
 
 def _l0_post_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord:
-    """L0-post: assign scope label from accumulated L2–L4 evidence.
-
-    Until L2–L4 are implemented, LayerEvidence is constructed with all
-    fields False, which yields NO_SCOPE_MECHANISM.  Once those layers run
-    they should set the appropriate flags before L0-post executes.
-    """
+    """L0-post: assign scope label from accumulated L2–L4 evidence."""
     start = time.monotonic()
 
+    has_split = False
+    has_homo = False
+    if record.l4_result is not None and record.l4_result.anchoring_status == AnchoringStatus.PASS:
+        if record.l4_result.anchor_relation == AnchorRelation.RESEGMENTATION:
+            has_split = True
+        else:
+            has_homo = True
+    elif record.l3_result is not None and record.l3_result.candidates:
+        top = record.l3_result.candidates[0]
+        if top.score_components.get("compound_split") == 1.0:
+            has_split = True
+        elif top.score > 0:
+            has_homo = True
+
     evidence = LayerEvidence(
-        has_homograph=(
-            record.l4_result is not None
-            and record.l4_result.anchoring_status == AnchoringStatus.PASS
-        ),
-        has_compound_split=False,
+        has_homograph=has_homo,
+        has_compound_split=has_split,
         is_homophone=False,
         is_nonlexical_joke=False,
     )
     scope_label = assign_scope_label(evidence)
+
+    main_class = MainClassification.NO_AMBIGUITY_FOUND
+    if record.l5_result is not None:
+        if record.l5_result.resolution_status == ResolutionStatus.RESOLUTION_PASS:
+            main_class = (
+                MainClassification.VALID_COMPOUND_SPLIT_JOKE
+                if scope_label == ScopeLabel.COMPOUND_SPLIT
+                else MainClassification.VALID_HOMOGRAPH_JOKE
+            )
+        elif record.l5_result.resolution_status == ResolutionStatus.RESOLUTION_FAIL:
+            main_class = MainClassification.RESOLUTION_FAIL
+    elif record.l4_result is not None:
+        if record.l4_result.anchoring_status == AnchoringStatus.ONE_SENSE_ONLY:
+            main_class = MainClassification.ONE_SENSE_ONLY
+        elif record.l4_result.anchoring_status == AnchoringStatus.FAIL:
+            main_class = MainClassification.ANCHORING_FAIL
+
     duration_ms = round((time.monotonic() - start) * 1000, 3)
 
     if record.final is None:
         record.final = FinalVerdict(
-            main_classification=MainClassification.NO_AMBIGUITY_FOUND,
+            main_classification=main_class,
             scope_label=scope_label,
         )
     else:
-        record.final = record.final.model_copy(update={"scope_label": scope_label})
+        record.final = record.final.model_copy(update={
+            "scope_label": scope_label,
+            "main_classification": main_class,
+        })
 
     record.trace.append(LayerTrace(
         layer="L0-post",
@@ -124,6 +150,9 @@ def _l0_post_layer(record: AnalysisRecord, settings: Settings) -> AnalysisRecord
 
 
 register_layer("L0-pre", _l0_pre_layer)
+register_layer("L1", run_l1)
+register_layer("L2", run_l2)
+register_layer("L3", run_l3)
 register_layer("L5", run_l5)
 register_layer("L0-post", _l0_post_layer)
 
