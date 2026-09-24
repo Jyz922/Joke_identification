@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-24 by daren-l5 deterministic-core session (offline, no API calls)
+Last updated: 2026-09-24 by daren-l5 L3-gate/MWE/AoA session (offline, no API calls)
 
 ---
 
@@ -9,27 +9,30 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline suite | `py -3.11 -m pytest -q -m "not live"` | **164 passed, 10 deselected** |
-| AoA data | `py -3.11 scripts/fetch_aoa.py` | sha256 matched; **31,105** rated words -> `data/aoa_kuperman.csv` |
-| WordNet | first use of `l2_senses.wordnet()` | WordNet 3.0 downloaded to `data/nltk_data/` |
+| Offline suite | `py -3.11 -m pytest -q -m "not live"` | **177 passed, 10 deselected** |
 | AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
-| L1 corpus routing | `tests/test_l1.py::test_corpus_distribution` | jokes 27 DECL / 13 QA; notjokes 17 DECL / 3 QA |
-| Live suite / calibration | none | **NOT run this session** (offline-only session) |
+| L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8) |
+| Corpus MWEs | scratch script over jokes.json + notjokes.json | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
+| jokes.json encoding | raw bytes (`od -c`) | **Clean.** 0 U+FFFD; 3 correct U+2019 apostrophes |
+| Live suite / calibration | none | **NOT run this session** |
 
 **Fresh clone needs data first:** `data/` is gitignored. Run `py -3.11 scripts/fetch_aoa.py`
 once before the offline suite; the L2/L3 tests fail loudly (FileNotFoundError) without it.
 WordNet auto-downloads on first use (network, not a paid API).
 
-### L2 AoA coverage (cumulative %, fallback chain exact -> lowercase -> lemmatized)
+### L2 AoA coverage (cumulative %)
 
-| Population | exact | +lowercase | +lemmatized | miss |
-|---|---|---|---|---|
-| all WordNet lemma names (148,730) | 18.9 | 19.5 | 19.6 | 80.4 |
-| single-word lemmas (79,264) | 35.4 | 36.5 | 36.7 | 63.3 |
-| single-word lemmas, semcor_count>0 (17,415) | 71.8 | 72.5 | 72.6 | 27.4 |
+Chain: exact -> lowercase -> lemmatized (both directions) -> derived_from_parts -> miss.
 
-The fallbacks add only +0.8 pts when the key is a WordNet lemma. Most misses are words Kuperman
-never rated (proper nouns, technical vocabulary), not form mismatches.
+| Population | exact | +lowercase | +lemmatized | +derived | miss |
+|---|---|---|---|---|---|
+| all WordNet lemma names (148,730) | 18.9 | 19.5 | 21.9 | 51.3 | 48.7 |
+| single-word lemmas (79,264) | 35.4 | 36.5 | 41.1 | 48.7 | 51.3 |
+| single-word, semcor_count>0 (17,415) | 71.8 | 72.5 | 79.8 | 85.1 | **14.9** |
+| MWE lemmas (64,243) | 0.0 | 0.0 | 0.0 | 52.5 | 47.5 |
+
+Useful population miss: 27.4% (last session) -> 14.9%. Of that, 7.3 pts come from a stage-3
+bug fix (the query side was never lemmatized) and 5.3 pts from derived_from_parts.
 
 ## Claimed but unverified
 
@@ -44,10 +47,10 @@ never rated (proper nouns, technical vocabulary), not form mismatches.
 | L0-pre | **done** | yes (13 tests in test_l0.py) | 97% cov; `isinstance` guard not tested |
 | L0-post | **done** | yes (9 tests in test_l0.py) | Wired; returns NO_SCOPE_MECHANISM until L2–L4 run |
 | L1 | **done** | yes (test_l1.py) | Regex-only genre routing; lemmas/pos_tags left empty (no tagger) |
-| L2 | **done** | yes (test_l2.py) | WordNet + SemCor counts (Lemma.count) + Kuperman AoA with fallback chain; compound splits |
-| L3 | **done** | yes (test_l3.py) | Age-free; gold term in top-3 for 7/10 L5 fixtures (D1/P2/P3 unreachable) |
+| L2 | **done** | yes (test_l2.py) | WordNet + SemCor counts + Kuperman AoA (5-stage chain incl. derived_from_parts); compound splits; MWE n-gram scan |
+| L3 | **done** | yes (test_l3.py) | Age-free; no frequency gate; contrast 0.7 + SemCor balance 0.3; homographs, compound splits, MWEs; 8/10 gold terms in top-3 |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done**, 4 branches | yes (offline green; live not run this session) | New DECLARATIVE branch (unvalidated); per-genre thresholds; resolving_sense replaces positional sense roles in QA/declarative prompts |
+| L5 | **done**, 4 branches | yes (offline green; live not run this session) | New DECLARATIVE branch (unvalidated); per-genre thresholds; resolving_sense replaces positional sense roles in QA/declarative/definitional prompts |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -133,7 +136,7 @@ never rated (proper nouns, technical vocabulary), not form mismatches.
 
 ### From deterministic-core session (2026-09-24)
 
-**o. P2 label likely wrong.** "Explain: to make the plain exit" meets all four README
+**o. P2 label — RESOLVED (1ec48cd).** Relabelled RESOLUTION_PASS: it is a pun. "Explain: to make the plain exit" meets all four README
 L5-OneLiner criteria (ex- + plain is a legitimate resegmentation, the split reading is coherent,
 and "make plain" even echoes the real meaning). No rationale for RESOLUTION_FAIL exists anywhere.
 [Likely] It should be RESOLUTION_PASS. Label NOT changed; owner's call. Either way the
@@ -144,20 +147,22 @@ and the QA prompt labelled sense_a "setup". Fixed via `L4Result.resolving_sense`
 threshold was set on data produced by the mislabelled prompt, so it must be re-checked on the
 next live run. Note: at 0.46, polarity=0 can still PASS (other features max 0.55).
 
-**q. Definitional + dialogue prompts still use positional labels.** Definitional says
+**q. Positional prompt labels — RESOLVED for definitional (9ced589).** Dialogue labels were already neutral. Definitional says
 "Sense B (compound-split reading)", and every current resegmentation fixture has the split as
 sense_b, so it's consistent today but not enforced. Dialogue labels are neutral. Only QA and
 declarative were switched to resolving_sense.
 
-**r. L3 SemCor-credibility rule drops real puns.** shingles (every sense has count 0), net as
+**r. L3 SemCor gate — RESOLVED (b8203c5).** Gate removed; SemCor is now a weak ranking feature; D1 reachable. Original note: shingles (every sense has count 0), net as
 net income (0), ex (0). D1, P2, P3 can't reach top-3; P3 is also multiword. Pinned in
 `test_l3.py::test_known_unreachable`. Declarative corpus puns will hit this too.
 
 **s. AoA lowercase stage makes false matches on acronyms.** `AIDS` (disease) gets the AoA of
 `aids` (plural of aid). Small (under 1 pt) but wrong. Not changed.
 
-**t. Corpus encoding.** `jokes.json` has U+FFFD replacement characters (couldn?t, Dan?s,
-isn?t); the curly apostrophes were lost upstream. Fix while annotating.
+**t. Corpus encoding — WITHDRAWN (my error).** jokes.json was never corrupted: it has correct
+U+2019 apostrophes (bytes e2 80 99). The "U+FFFD" was the Windows cp1252 console rendering them.
+Real consequence found: the L1 tokenizer and negation regex only accepted ASCII `'`. Fixed in
+b5ee53f + 51dd615.
 
 **u. Question-only QA item.** "How many stories were in the library building?" routes to
 QA_RIDDLE but has no answer clause; the QA prompt assumes there is one.
@@ -165,6 +170,23 @@ QA_RIDDLE but has no answer clause; the QA prompt assumes there is one.
 **v. Kuperman source.** The original crr.ugent.be zip is 404. `fetch_aoa.py` uses the Internet
 Archive capture of `AoA_51715_words.zip` (column AoA_Kup, 31,105 rows vs the paper's 30,121).
 Licence: NoRaRe lists the dataset as CC-BY 4.0 [not verified at source]; not committed anyway.
+
+**w. derived_from_parts mis-splits -ly adverbs.** 102 credible single-word lemmas derive via a
+bogus `ally` split (`comically` = comic + ally, AoA 9.61). Conservative (overestimates age) and
+labelled, but wrong. The candidate fix is a WordNet pertainym stage (adverb -> adjective); not
+built, not asked for. `growling` = grow + ling is the same class of error.
+
+**x. WordNet lacks most corpus idioms.** net_loss, on_the_house, days_are_numbered, rough_patch are
+absent. The n-gram scan can't reach them; those puns only surface as single-token homographs.
+"row between the oarsmen" is not an MWE (row/row is a homograph).
+
+**y. P3's MWE lands on the literal sense.** "Pull yourself together" matches `pull_together`, but
+WordNet's only sense is gather.v.01 (the curtains reading); there's no compose-oneself sense.
+P3 ranks 8th. Pinned in `test_l3.py::test_known_unreachable`.
+
+**z. MWE noise.** Compounds (wine_bottle, night_shift, divorce_lawyer) and phrasal verbs (come_to,
+break_up) also match; they take L3 slots only when contrastive. `build_in` matched "building in"
+via first-token lemmatization.
 
 ---
 
@@ -203,11 +225,10 @@ per-run ranges, as was done for QA.
 
 Steps:
 1. Annotate each corpus item with an L4 contract (senses, anchor quotes, anchor_relation,
-   anchoring_status, **resolving_sense**) and an expected L5 status. Fix the U+FFFD characters (issue t).
+   anchoring_status, **resolving_sense**) and an expected L5 status.
 2. Add them as fixtures; extend the calibration script to read them.
 3. API-gated, needs explicit approval: re-run L5 calibration. It covers the new declarative
    items, and QA must be re-checked because the resolving_sense fix changed the QA prompt (issue p).
-4. Settle the P2 label (issue o) before that run.
 
 Then continue the build order: L7 (comprehension, per-age; reads aoa_estimate + aoa_match), L4.
 
@@ -222,6 +243,31 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
 ## Session log
 
 *(append-only — never rewrite old entries)*
+
+### 2026-09-24 — L3 gate / MWE / AoA session (daren-l5), offline, no API calls
+
+Commits: 1ec48cd (P2), 9ced589 (definitional prompt), b5ee53f + 51dd615 (U+2019 tokens/negation;
+b5ee53f's message claims the negation fix, but its edit failed silently and 51dd615 lands it),
+b8203c5 (L3 gate), 22a0c48 (MWE), 0dad86b (AoA derived + stage-3 fix).
+
+- **Corrections to the previous entry:** (1) jokes.json was never mis-encoded (issue t
+  withdrawn). (2) "The fallbacks add only +0.8 pts" was wrong: stage 3 lemmatized only the AoA
+  side, so it missed surface-form queries such as washing/assets/diminished (1,207 credible lemmas).
+- **P2 verdict: yes, a pun.** Relabelled RESOLUTION_PASS. The 5-run calibration (0.865-0.930)
+  now counts as correct.
+- **Definitional prompt** names {resolving_sense}/{other_sense}. A test asserts no named-sense
+  prompt references {sense_a}/{sense_b}.
+- **L3:** gate removed. score = 0.7*contrast + 0.3*balance, balance = (c2+1)/(c1+1). One entry per
+  term in top-k (life was a homograph and a li+fe split). Gold top-3: 7/10 -> 8/10 (D1 reachable).
+- **MWE:** `l2_senses.mwe_spans`: 2-4 gram, exact WordNet lemma names, first-token lemmatized,
+  reflexive -> oneself/dropped (closed class, no idiom list). The scan lives in L2 (WordNet
+  access); L1 stays regex-only and `L1Result.multiword_expressions` stays empty. L3 scores MWE
+  vs literal word readings. Corpus: 17/60 items gain an MWE candidate; 3 reach top-3.
+- **AoA:** derived_from_parts (max of parts) + query-side lemmatization via WordNetLemmatizer.
+  Useful-population miss 27.4% -> 14.9%.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` -> **177 passed, 10 deselected**
+(start: 164). No live tests, no calibration, no API calls.
 
 ### 2026-09-24 — Deterministic core session (daren-l5), offline, no API calls
 
