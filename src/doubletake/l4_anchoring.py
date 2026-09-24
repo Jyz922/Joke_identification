@@ -180,9 +180,9 @@ def _call_gemini_l4(
     client: _genai.Client | None,
 ) -> _L4Call:
     if client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key, key_name = resolve_api_key("gemini", settings)
         if not api_key:
-            raise ValueError("GEMINI_API_KEY not set")
+            raise ValueError(f"{key_name} not set")
         client = _genai.Client(api_key=api_key)
 
     models = [settings.L4_MODEL_GEMINI, *settings.L4_MODEL_GEMINI_CHAIN]
@@ -199,13 +199,70 @@ def _call_gemini_l4(
     return _L4Call(None, models[-1], True, total_retries)
 
 
+from .providers import (
+    PROVIDERS,
+    call_openai_compatible,
+    create_client,
+    resolve_api_key,
+    resolve_backend,
+    resolve_model,
+)
+
+
+def _call_openai_l4(
+    prompt_text: str,
+    backend: str,
+    settings: Settings,
+    client: Any | None = None,
+) -> _L4Call:
+    if client is None:
+        client = create_client(backend, settings)
+    model = resolve_model(backend, "L4", settings)
+    parsed, retries, fallback_used = call_openai_compatible(
+        client=client,
+        model=model,
+        prompt_text=prompt_text,
+        max_output_tokens=settings.L4_MAX_OUTPUT_TOKENS,
+        temperature=0.0,
+    )
+    return _L4Call(parsed, model, fallback_used, retries)
+
+
 def _complete_l4(
     prompt: str,
     settings: Settings,
     client: Any,
 ) -> _L4Call:
-    # If client is a mock with either interface, dispatch accordingly
+    backend = resolve_backend(settings.L4_BACKEND, settings)
+
+    # If client is a mock, dispatch according to backend and capabilities
     if client is not None:
+        if backend == "gemini" and hasattr(client, "models"):
+            resp = client.models.generate_content(model="mock", contents=prompt)
+            raw = getattr(resp, "text", "")
+            try:
+                parsed = _extract_json(raw)
+            except Exception:
+                parsed = None
+            return _L4Call(parsed, "mock", False, 0)
+        if backend == "anthropic" and hasattr(client, "messages"):
+            resp = client.messages.create(model="mock", messages=[{"role": "user", "content": prompt}])
+            raw = resp.content[0].text
+            try:
+                parsed = _extract_json(raw)
+            except Exception:
+                parsed = None
+            return _L4Call(parsed, "mock", False, 0)
+        if backend in PROVIDERS and PROVIDERS[backend].sdk_family == "openai" and hasattr(client, "chat"):
+            resp = client.chat.completions.create(model="mock", messages=[{"role": "user", "content": prompt}])
+            raw = resp.choices[0].message.content
+            try:
+                parsed = _extract_json(raw)
+            except Exception:
+                parsed = None
+            return _L4Call(parsed, "mock", False, 0)
+
+        # Fallbacks for generic mocks where backend wasn't specifically matched
         if hasattr(client, "models"):
             resp = client.models.generate_content(model="mock", contents=prompt)
             raw = getattr(resp, "text", "")
@@ -222,12 +279,22 @@ def _complete_l4(
             except Exception:
                 parsed = None
             return _L4Call(parsed, "mock", False, 0)
+        if hasattr(client, "chat"):
+            resp = client.chat.completions.create(model="mock", messages=[{"role": "user", "content": prompt}])
+            raw = resp.choices[0].message.content
+            try:
+                parsed = _extract_json(raw)
+            except Exception:
+                parsed = None
+            return _L4Call(parsed, "mock", False, 0)
 
-    if settings.L4_BACKEND == "gemini":
+    if backend == "gemini":
         return _call_gemini_l4(prompt, settings, client)
-    if settings.L4_BACKEND == "anthropic":
+    if backend == "anthropic":
         parsed = _call_anthropic_l4(prompt, settings.L4_MODEL_ANTHROPIC, client)
         return _L4Call(parsed, settings.L4_MODEL_ANTHROPIC, False, 0)
+    if backend in PROVIDERS and PROVIDERS[backend].sdk_family == "openai":
+        return _call_openai_l4(prompt, backend, settings, client)
     raise ValueError(f"Unknown L4_BACKEND: {settings.L4_BACKEND!r}")
 
 

@@ -297,6 +297,42 @@ class TestAnchorL4Offline:
         assert res.anchor_relation == AnchorRelation.SPEAKER_MISMATCH
         assert res.resolving_sense == "sense_b"  # fallback default
 
+    def test_openai_backend_calls_chat_completions(self) -> None:
+        settings = DEFAULT_SETTINGS.model_copy(update={"L4_BACKEND": "openai"})
+        payload = json.dumps({
+            "sense_a": "organs", "sense_a_anchor_quote": "skeletons",
+            "sense_b": "courage", "sense_b_anchor_quote": "no guts",
+            "anchor_relation": "separate_contexts",
+            "anchoring_status": "PASS",
+            "resolving_sense": "sense_a",
+        })
+        client = MagicMock()
+        choice = MagicMock()
+        choice.message.content = payload
+        client.chat.completions.create.return_value = MagicMock(choices=[choice])
+        rec = _make_record("Because they have no guts.", Genre.DECLARATIVE, candidate_term="guts")
+        res = anchor_l4(rec, settings, client=client)
+        assert res.anchoring_status == AnchoringStatus.PASS
+        client.chat.completions.create.assert_called_once()
+
+    def test_deepseek_backend_calls_chat_completions(self) -> None:
+        settings = DEFAULT_SETTINGS.model_copy(update={"L4_BACKEND": "deepseek"})
+        payload = json.dumps({
+            "sense_a": "organs", "sense_a_anchor_quote": "skeletons",
+            "sense_b": "courage", "sense_b_anchor_quote": "no guts",
+            "anchor_relation": "separate_contexts",
+            "anchoring_status": "PASS",
+            "resolving_sense": "sense_a",
+        })
+        client = MagicMock()
+        choice = MagicMock()
+        choice.message.content = payload
+        client.chat.completions.create.return_value = MagicMock(choices=[choice])
+        rec = _make_record("Because they have no guts.", Genre.DECLARATIVE, candidate_term="guts")
+        res = anchor_l4(rec, settings, client=client)
+        assert res.anchoring_status == AnchoringStatus.PASS
+        client.chat.completions.create.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # Fixture verification test — verifies all 10 fixtures can be parsed

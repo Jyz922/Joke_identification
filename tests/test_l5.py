@@ -581,7 +581,36 @@ def test_gemini_backend_calls_generate_content_not_anthropic() -> None:
 
 def test_invalid_backend_rejected_at_config_load() -> None:
     with pytest.raises(Exception):  # pydantic ValidationError
-        Settings(L5_BACKEND="openai")  # type: ignore[arg-type]
+        Settings(L5_BACKEND="unsupported_dummy_backend")  # type: ignore[arg-type]
+
+
+def test_openai_and_deepseek_backends_accepted_at_config_load() -> None:
+    s_openai = Settings(L5_BACKEND="openai")
+    assert s_openai.L5_BACKEND == "openai"
+    s_deepseek = Settings(L5_BACKEND="deepseek")
+    assert s_deepseek.L5_BACKEND == "deepseek"
+
+
+def test_openai_backend_calls_chat_completions() -> None:
+    settings = Settings(L5_BACKEND="openai")
+    payload = json.dumps({k: 0.9 for k in settings.L5_QA_WEIGHTS})
+    client = MagicMock()
+    choice = MagicMock()
+    choice.message.content = payload
+    client.chat.completions.create.return_value = MagicMock(choices=[choice])
+    resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+    client.chat.completions.create.assert_called_once()
+
+
+def test_deepseek_backend_calls_chat_completions() -> None:
+    settings = Settings(L5_BACKEND="deepseek")
+    payload = json.dumps({k: 0.9 for k in settings.L5_QA_WEIGHTS})
+    client = MagicMock()
+    choice = MagicMock()
+    choice.message.content = payload
+    client.chat.completions.create.return_value = MagicMock(choices=[choice])
+    resolve_l5(_qa_record_for_routing(), settings, ambiguous_term="guts", client=client)
+    client.chat.completions.create.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

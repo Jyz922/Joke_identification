@@ -436,9 +436,9 @@ def _call_gemini_with_chain(
     the fallback chain (neither is fixed by switching models).
     """
     if client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key, key_name = resolve_api_key("gemini", settings)
         if not api_key:
-            raise ValueError("GEMINI_API_KEY not set")
+            raise ValueError(f"{key_name} not set")
         client = _genai.Client(api_key=api_key)
 
     models = [settings.L5_MODEL_GEMINI, *settings.L5_MODEL_GEMINI_CHAIN]
@@ -476,6 +476,43 @@ def _call_gemini_with_chain(
     raise RuntimeError("unreachable")
 
 
+from .providers import (
+    PROVIDERS,
+    call_openai_compatible,
+    create_client,
+    resolve_api_key,
+    resolve_backend,
+    resolve_model,
+)
+
+
+def _call_openai_l5(
+    prompt_text: str,
+    backend: str,
+    required_keys: frozenset[str],
+    settings: Settings,
+    client: Any | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> _L5Call:
+    if client is None:
+        client = create_client(backend, settings)
+    model = resolve_model(backend, "L5", settings)
+
+    def _validate(p: dict[str, Any], attempt: int) -> None:
+        _validate_keys(p, required_keys, attempt, backend)
+
+    parsed, retries, fallback_used = call_openai_compatible(
+        client=client,
+        model=model,
+        prompt_text=prompt_text,
+        max_output_tokens=settings.L5_MAX_OUTPUT_TOKENS,
+        temperature=0.0,
+        required_keys=required_keys,
+        validate_fn=_validate,
+    )
+    return _L5Call(parsed, model, fallback_used, retries, False, None)
+
+
 # ---------------------------------------------------------------------------
 # Backend dispatcher
 # ---------------------------------------------------------------------------
@@ -488,13 +525,38 @@ def _complete_json(
     client: Any,
     diagnostics: dict[str, Any] | None = None,
 ) -> _L5Call:
-    if settings.L5_BACKEND == "gemini":
+    backend = resolve_backend(settings.L5_BACKEND, settings)
+
+    # If client is mock, route according to backend and capabilities
+    if client is not None:
+        if backend == "gemini" and hasattr(client, "models"):
+            return _call_gemini_with_chain(
+                prompt, response_model, required_keys, settings, client, diagnostics
+            )
+        if backend == "anthropic" and hasattr(client, "messages"):
+            result = _call_llm(prompt, settings.L5_MODEL_ANTHROPIC, client, required_keys=required_keys)
+            return _L5Call(result, settings.L5_MODEL_ANTHROPIC, False, 0)
+        if backend in PROVIDERS and PROVIDERS[backend].sdk_family == "openai" and hasattr(client, "chat"):
+            return _call_openai_l5(prompt, backend, required_keys, settings, client, diagnostics)
+        if hasattr(client, "models"):
+            return _call_gemini_with_chain(
+                prompt, response_model, required_keys, settings, client, diagnostics
+            )
+        if hasattr(client, "messages"):
+            result = _call_llm(prompt, settings.L5_MODEL_ANTHROPIC, client, required_keys=required_keys)
+            return _L5Call(result, settings.L5_MODEL_ANTHROPIC, False, 0)
+        if hasattr(client, "chat"):
+            return _call_openai_l5(prompt, backend, required_keys, settings, client, diagnostics)
+
+    if backend == "gemini":
         return _call_gemini_with_chain(
             prompt, response_model, required_keys, settings, client, diagnostics
         )
-    if settings.L5_BACKEND == "anthropic":
+    if backend == "anthropic":
         result = _call_llm(prompt, settings.L5_MODEL_ANTHROPIC, client, required_keys=required_keys)
         return _L5Call(result, settings.L5_MODEL_ANTHROPIC, False, 0)
+    if backend in PROVIDERS and PROVIDERS[backend].sdk_family == "openai":
+        return _call_openai_l5(prompt, backend, required_keys, settings, client, diagnostics)
     raise ValueError(f"Unknown L5_BACKEND: {settings.L5_BACKEND!r}")
 
 

@@ -22,6 +22,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from .enums import Genre
+from .providers import BackendType
 
 
 class Settings(BaseModel):
@@ -56,20 +57,26 @@ class Settings(BaseModel):
     L3_TOP_K: int = 3
 
     # --- L4 backend ------------------------------------------------------
-    L4_BACKEND: Literal["gemini", "anthropic"] = "gemini"
+    L4_BACKEND: BackendType = "gemini"
+    L4_MODEL: str | None = None
     L4_MODEL_GEMINI: str = "gemini-3.6-flash"
     L4_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
     L4_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    L4_MODEL_OPENAI: str = "gpt-4o-mini"
+    L4_MODEL_DEEPSEEK: str = "deepseek-chat"
     L4_MAX_OUTPUT_TOKENS: int = 4096
     L4_CALL_PAUSE_SECONDS: float = 6.0
 
     # --- L5 backend ------------------------------------------------------
-    L5_BACKEND: Literal["gemini", "anthropic"] = "gemini"
+    L5_BACKEND: BackendType = "gemini"
+    L5_MODEL: str | None = None
     # Pin exact IDs — never use -latest aliases; availability varies by account age.
     L5_MODEL_GEMINI: str = "gemini-3.6-flash"
     # Ordered fallback chain tried after the primary exhausts its 5xx retries.
     L5_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
     L5_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    L5_MODEL_OPENAI: str = "gpt-4o-mini"
+    L5_MODEL_DEEPSEEK: str = "deepseek-chat"
     # Max output tokens per Gemini call. Gemini 3.x counts THINKING tokens
     # against this cap — measured thinking was 487 then 969 on the same temp-0
     # prompt (2x variance), and the dialogue/definitional branches have longer,
@@ -78,6 +85,21 @@ class Settings(BaseModel):
     # JSON mid-emit (finish_reason=MAX_TOKENS) and used to masquerade as a
     # parse failure — see ResolutionStatus.TRUNCATED_OUTPUT.
     L5_MAX_OUTPUT_TOKENS: int = 8192
+
+    # --- Provider API keys & custom base URLs ----------------------------
+    OPENAI_API_KEY: str | None = None
+    DEEPSEEK_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None
+    GROQ_API_KEY: str | None = None
+    MISTRAL_API_KEY: str | None = None
+    DASHSCOPE_API_KEY: str | None = None
+    MOONSHOT_API_KEY: str | None = None
+    ZHIPUAI_API_KEY: str | None = None
+    SILICONFLOW_API_KEY: str | None = None
+
+    OPENAI_BASE_URL: str | None = None
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
 
     # --- L5 QA resolution ------------------------------------------------
     # Weights must sum to 1.0 (asserted below).
