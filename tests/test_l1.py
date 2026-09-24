@@ -60,7 +60,9 @@ def test_analyze_surface_flags() -> None:
 
 
 def test_curly_apostrophe_stays_in_token() -> None:
-    assert analyze("We couldn’t imagine it.").tokens[:2] == ["We", "couldn’t"]
+    r = analyze("We couldn’t imagine it.")
+    assert r.tokens[:2] == ["We", "couldn’t"]
+    assert r.has_negation
 
 
 def test_run_l1_sets_result_and_trace() -> None:
