@@ -410,6 +410,16 @@ class TestResolveL5Offline:
         assert "{" + "resolving_sense}" not in a
         assert "Punchline sense (the reading the punchline resolves to):** courage" in a
 
+    @pytest.mark.parametrize("genre", [Genre.DEFINITIONAL_ONELINER, Genre.DECLARATIVE])
+    def test_named_sense_prompts_never_reference_position(self, genre: Genre) -> None:
+        template = (Path(__file__).parents[1] / "src" / "doubletake" / "prompts"
+                    / {Genre.DEFINITIONAL_ONELINER: "l5_definitional.md",
+                       Genre.DECLARATIVE: "l5_declarative.md"}[genre]).read_text(encoding="utf-8")
+        assert "{sense_a" not in template and "{sense_b" not in template
+        l4 = self._definitional_l4()
+        rendered = _render_prompt(genre, self._DEF_TEXT, "autobiography", l4)
+        assert "resolves to):** auto (car) + biography" in rendered
+
     def test_pass_anchoring_requires_resolving_sense(self) -> None:
         with pytest.raises(ValidationError):
             L4Result(
