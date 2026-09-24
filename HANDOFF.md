@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-24 by daren-l5 INSUFFICIENT_CONTEXT root-cause session
+Last updated: 2026-09-24 by daren-l5 deterministic-core session (offline, no API calls)
 
 ---
 
@@ -9,32 +9,27 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Full test suite | `py -3.11 -m pytest -q` | **130 passed, 0 failed** (120 offline + 10 live) |
-| Offline only | `py -3.11 -m pytest -q -m "not live"` | **120 passed, 10 deselected** |
-| Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
-| API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
-| L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
-| Runner CLI | `py -3.11 -m doubletake.runner --blind tests/fixtures/sample_blind.jsonl` | **Valid JSONL** — 3 items, 3 trace entries each (L0-pre OK, L5 ERROR, L0-post OK) |
-| NotImplementedError stubs | read layers.py | 7 stubs: run_l1, run_l2, run_l3, run_l4, run_l6, run_l7, run_l8 |
-| Git state | `git log --oneline -8` | On daren-l5; 7 commits including all fixes from this session |
-| pytest-cov installed | install attempt | Was **NOT installed** — installed during this session |
+| Offline suite | `py -3.11 -m pytest -q -m "not live"` | **164 passed, 10 deselected** |
+| AoA data | `py -3.11 scripts/fetch_aoa.py` | sha256 matched; **31,105** rated words -> `data/aoa_kuperman.csv` |
+| WordNet | first use of `l2_senses.wordnet()` | WordNet 3.0 downloaded to `data/nltk_data/` |
+| AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
+| L1 corpus routing | `tests/test_l1.py::test_corpus_distribution` | jokes 27 DECL / 13 QA; notjokes 17 DECL / 3 QA |
+| Live suite / calibration | none | **NOT run this session** (offline-only session) |
 
-### Per-module coverage (offline suite, branch mode)
+**Fresh clone needs data first:** `data/` is gitignored. Run `py -3.11 scripts/fetch_aoa.py`
+once before the offline suite; the L2/L3 tests fail loudly (FileNotFoundError) without it.
+WordNet auto-downloads on first use (network, not a paid API).
 
-| Module | Stmts | Miss | Cover |
-|---|---|---|---|
-| `__init__.py` | 1 | 0 | 100% |
-| `config.py` | 18 | 0 | 100% |
-| `corpus.py` | 68 | 4 | 91% |
-| `enums.py` | 53 | 0 | 100% |
-| `l0_scope.py` | 40 | 1 | 97% |
-| `l5_resolution.py` | 80 | 6 | 89% |
-| `layers.py` | 26 | 26 | **0%** |
-| `runner.py` | 76 | 76 | **0%** |
-| `schema.py` | 116 | 1 | 98% |
-| **TOTAL** | **478** | **114** | **76%** |
+### L2 AoA coverage (cumulative %, fallback chain exact -> lowercase -> lemmatized)
 
----
+| Population | exact | +lowercase | +lemmatized | miss |
+|---|---|---|---|---|
+| all WordNet lemma names (148,730) | 18.9 | 19.5 | 19.6 | 80.4 |
+| single-word lemmas (79,264) | 35.4 | 36.5 | 36.7 | 63.3 |
+| single-word lemmas, semcor_count>0 (17,415) | 71.8 | 72.5 | 72.6 | 27.4 |
+
+The fallbacks add only +0.8 pts when the key is a WordNet lemma. Most misses are words Kuperman
+never rated (proper nouns, technical vocabulary), not form mismatches.
 
 ## Claimed but unverified
 
@@ -48,11 +43,11 @@ All items below were confirmed by commands run in this session.
 |---|---|---|---|
 | L0-pre | **done** | yes (13 tests in test_l0.py) | 97% cov; `isinstance` guard not tested |
 | L0-post | **done** | yes (9 tests in test_l0.py) | Wired; returns NO_SCOPE_MECHANISM until L2–L4 run |
-| L1 | **stub** | none | `run_l1` raises NotImplementedError |
-| L2 | **stub** | none | `run_l2` raises NotImplementedError |
-| L3 | **stub** | none | `run_l3` raises NotImplementedError |
+| L1 | **done** | yes (test_l1.py) | Regex-only genre routing; lemmas/pos_tags left empty (no tagger) |
+| L2 | **done** | yes (test_l2.py) | WordNet + SemCor counts (Lemma.count) + Kuperman AoA with fallback chain; compound splits |
+| L3 | **done** | yes (test_l3.py) | Age-free; gold term in top-3 for 7/10 L5 fixtures (D1/P2/P3 unreachable) |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (120 offline, 10 live; all green) | Gemini backend (default); 5xx retry + model fallback chain; anchor-span short-circuit guard; QA/dialogue branches exercised live (suite green) |
+| L5 | **done**, 4 branches | yes (offline green; live not run this session) | New DECLARATIVE branch (unvalidated); per-genre thresholds; resolving_sense replaces positional sense roles in QA/declarative prompts |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -136,6 +131,41 @@ All items below were confirmed by commands run in this session.
 **m. Bare string comparison in _l0_post_layer** — RESOLVED (fe433c7)
 - `runner.py:99` now uses `AnchoringStatus.PASS` instead of `"PASS"`
 
+### From deterministic-core session (2026-09-24)
+
+**o. P2 label likely wrong.** "Explain: to make the plain exit" meets all four README
+L5-OneLiner criteria (ex- + plain is a legitimate resegmentation, the split reading is coherent,
+and "make plain" even echoes the real meaning). No rationale for RESOLUTION_FAIL exists anywhere.
+[Likely] It should be RESOLUTION_PASS. Label NOT changed; owner's call. Either way the
+definitional branch has never been shown a real negative.
+
+**p. QA polarity re-calibration needed.** S1/S2 stored courage (the punchline sense) as sense_a,
+and the QA prompt labelled sense_a "setup". Fixed via `L4Result.resolving_sense`. The 0.46 QA
+threshold was set on data produced by the mislabelled prompt, so it must be re-checked on the
+next live run. Note: at 0.46, polarity=0 can still PASS (other features max 0.55).
+
+**q. Definitional + dialogue prompts still use positional labels.** Definitional says
+"Sense B (compound-split reading)", and every current resegmentation fixture has the split as
+sense_b, so it's consistent today but not enforced. Dialogue labels are neutral. Only QA and
+declarative were switched to resolving_sense.
+
+**r. L3 SemCor-credibility rule drops real puns.** shingles (every sense has count 0), net as
+net income (0), ex (0). D1, P2, P3 can't reach top-3; P3 is also multiword. Pinned in
+`test_l3.py::test_known_unreachable`. Declarative corpus puns will hit this too.
+
+**s. AoA lowercase stage makes false matches on acronyms.** `AIDS` (disease) gets the AoA of
+`aids` (plural of aid). Small (under 1 pt) but wrong. Not changed.
+
+**t. Corpus encoding.** `jokes.json` has U+FFFD replacement characters (couldn?t, Dan?s,
+isn?t); the curly apostrophes were lost upstream. Fix while annotating.
+
+**u. Question-only QA item.** "How many stories were in the library building?" routes to
+QA_RIDDLE but has no answer clause; the QA prompt assumes there is one.
+
+**v. Kuperman source.** The original crr.ugent.be zip is 404. `fetch_aoa.py` uses the Internet
+Archive capture of `AoA_51715_words.zip` (column AoA_Kup, 31,105 rows vs the paper's 30,121).
+Licence: NoRaRe lists the dataset as CC-BY 4.0 [not verified at source]; not committed anyway.
+
 ---
 
 ## Build order (agreed)
@@ -143,10 +173,10 @@ All items below were confirmed by commands run in this session.
 | Step | Layer | Current status | Notes |
 |---|---|---|---|
 | 1 | L5 | **done** — live calibration pending | Needs API key + `py -3.11 scripts/run_l5_calibration.py` |
-| 2 | L2 | **stub** — next to build | WordNet + SemCor + Kuperman AoA retriever |
+| 2 | L2 | **done** | WordNet + SemCor + Kuperman AoA retriever |
 | 3 | L7 | **stub** | Comprehension, per-age |
-| 4 | L1 | **stub** | Surface analysis + genre routing |
-| 5 | L3 | **stub** | Candidate ranking (age-free) |
+| 4 | L1 | **done** | Surface analysis + genre routing |
+| 5 | L3 | **done** | Candidate ranking (age-free) |
 | 6 | L4 | **stub** | Anchoring |
 | 7 | L8 | **stub** | Appropriateness |
 | 8 | L6 | **stub** — low priority | Leave as L6_SKIPPED unless time allows |
@@ -166,37 +196,20 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-**Run the calibration — the cap fix is applied and verified. Owner (Daren) runs it.**
-
-Root cause (all-INSUFFICIENT_CONTEXT run) was `max_output_tokens=512`: Gemini 3.x
-counts thinking tokens against it, thinking (487–969 observed) consumed the budget,
-JSON truncated mid-emit and was misread as a parse failure. FIXED in commit
-`d241418`:
-
-- `L5_MAX_OUTPUT_TOKENS = 8192` (config.py). Verified live: S1 at 8192 → `STOP`,
-  thoughts=914, output=62, valid JSON. Three thinking samples (487/969/914) all
-  clear 8192 with ~7200 headroom.
-- `ResolutionStatus.TRUNCATED_OUTPUT` added. `finish_reason==MAX_TOKENS` now returns
-  it distinctly (ERROR-logged with item + thoughts count), never again masquerading
-  as a model verdict. Offline test covers it.
-- Calibration now records `finish_reason` + `thoughts_token_count` per row and the
-  raw file persists the actual `response.text`; report has a thinking-distribution
-  section to prove the cap held.
+**Calibrate the DECLARATIVE branch from the annotated corpus (owner is annotating jokes.json /
+notjokes.json).** Declarative fixtures come from it: 27 declarative jokes + 17 declarative
+non-jokes. That's enough to set the DECLARATIVE threshold (currently 0.60, UNVALIDATED) from
+per-run ranges, as was done for QA.
 
 Steps:
-1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available.
-2. `py -3.11 scripts/run_l5_calibration.py --fresh` — the existing
-   `runs/l5_calibration.jsonl` holds 45 stale all-INSUFFICIENT rows from the buggy
-   run; use `--fresh` (not `--resume`) so they don't poison the report. **API-gated:
-   needs explicit approval per HANDOFF live-call rule.**
-3. Review `docs/L5_CALIBRATION.md` — note that the currently-uncommitted version of
-   this file is the STALE buggy report (all INSUFFICIENT); the fresh run overwrites it.
+1. Annotate each corpus item with an L4 contract (senses, anchor quotes, anchor_relation,
+   anchoring_status, **resolving_sense**) and an expected L5 status. Fix the U+FFFD characters (issue t).
+2. Add them as fixtures; extend the calibration script to read them.
+3. API-gated, needs explicit approval: re-run L5 calibration. It covers the new declarative
+   items, and QA must be re-checked because the resolving_sense fix changed the QA prompt (issue p).
+4. Settle the P2 label (issue o) before that run.
 
-The AFC warning printed by the SDK is a RED HERRING: `function_calls=None`,
-`automatic_function_calling_history=[]`. Not related to the failure.
-
-After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA
-retriever) per the agreed build order.
+Then continue the build order: L7 (comprehension, per-age; reads aoa_estimate + aoa_match), L4.
 
 ---
 
@@ -209,6 +222,37 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
 ## Session log
 
 *(append-only — never rewrite old entries)*
+
+### 2026-09-24 — Deterministic core session (daren-l5), offline, no API calls
+
+Commits: 47425d4 (calibration doc), 9f300c6 (item 1), 2e2fad9 (item 2), 4e3facd (item 3),
+cafb695 (item 4), d1527f8 (item 5), 9bd6d86 (item 6).
+
+- **Correction to prior entries:** `docs/L5_CALIBRATION.md` was NOT the stale
+  all-INSUFFICIENT report. It was a fresh 5-run report (2026-09-24 20:52 UTC, real scores).
+  Committed as-is in 47425d4.
+- **L5 DECLARATIVE branch:** declarative was routed to the dialogue prompt (speaker-mismatch
+  subscores), not a catch-all. Added `L5DeclarativeResult`, `prompts/l5_declarative.md`
+  (both_readings_available, punchline_sense_is_unexpected, incongruity_present; weights
+  0.30/0.40/0.30, unvalidated). `L5DialogueResult` now accepts DIALOGUE only.
+- **Per-genre thresholds:** `L5_RESOLUTION_THRESHOLDS` replaces `L5_RESOLUTION_THRESHOLD`.
+  QA 0.46: X1 max 0.417 < 0.46 < E1 min 0.507, per run (0.55, from means, would fail E1 on 4/5
+  runs). Others 0.60; DECLARATIVE marked UNVALIDATED in config + ARCHITECTURE.md. No threshold
+  fixes S2. Calibration script's polarity analysis is now computed from the configured threshold.
+- **Polarity inversion:** `L4Result.resolving_sense` (sense_a|sense_b, required when anchoring
+  PASS). `_render_prompt` fills {resolving_sense}/{other_sense}, so the QA and declarative prompts
+  name the punchline sense by gloss. Fixtures: S1/S2 -> sense_a, N1 -> null, rest -> sense_b.
+  `debug_one_call.py` reuses `_render_prompt` (it had its own copy).
+- **L2:** `l2_senses.py`. nltk added to pyproject (3.10.3 installed). SemCor counts via
+  `Lemma.count()`; raw SemCor corpus not downloaded. `scripts/fetch_aoa.py` (sha256-pinned,
+  stdlib xlsx parse) -> `data/aoa_kuperman.csv`; `data/` gitignored. Citation in ARCHITECTURE.md §8.
+- **L1:** `l1_surface.py`, regex only (no spaCy). **L3:** `l3_candidates.py`, age-free; split
+  candidates score on the part-vs-part gap (see module docstring for why).
+- `run_l1`, `run_l2`, `run_l3` wired in layers.py.
+- New open issues o–v.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` -> **164 passed, 10 deselected**
+(baseline at session start: 121). No live tests, no calibration, no API calls.
 
 ### 2026-09-24 — Cap fix + truncation surfacing (daren-l5), commit d241418
 
