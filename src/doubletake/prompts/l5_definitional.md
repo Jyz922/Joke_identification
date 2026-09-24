@@ -9,17 +9,17 @@ Assess the joke below on three dimensions. Each dimension score must be a float 
 
 **Ambiguous term:** {ambiguous_term}
 
-**Sense A (conventional reading):** {sense_a}
-Anchored at: "{sense_a_anchor_quote}"
+**Conventional reading (the reading the definition switches away from):** {other_sense}
+Anchored at: "{other_sense_anchor_quote}"
 
-**Sense B (compound-split reading):** {sense_b}
-Anchored at: "{sense_b_anchor_quote}"
+**Punchline reading (the compound-split reading the definition resolves to):** {resolving_sense}
+Anchored at: "{resolving_sense_anchor_quote}"
 
 **Anchor relation:** {anchor_relation}
 
 ## Important note on same-span anchors
 
-If sense_a_anchor_quote and sense_b_anchor_quote are identical, this is expected for compound-split jokes: both readings anchor to the same surface token (the compound word itself). Do NOT penalise same-span anchors when anchor_relation is "resegmentation". Evaluate the semantic contrast between the two readings, not the location of the anchor.
+If the two readings' anchor quotes are identical, this is expected for compound-split jokes: both readings anchor to the same surface token (the compound word itself). Do NOT penalise same-span anchors when anchor_relation is "resegmentation". Evaluate the semantic contrast between the two readings, not the location of the anchor.
 
 ## Dimensions to score
 

@@ -28,9 +28,10 @@ def _qa_record() -> AnalysisRecord:
         sense_a="courage",
         sense_a_anchor_quote="no guts",
         sense_b="internal organs",
-        sense_b_anchor_quote="no guts",
+        sense_b_anchor_quote="skeletons",
         anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
         anchoring_status=AnchoringStatus.PASS,
+        resolving_sense="sense_a",
     )
     return record
 

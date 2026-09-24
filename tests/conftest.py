@@ -5,10 +5,21 @@ import pytest
 from doubletake.config import DEFAULT_SETTINGS
 
 
-def pytest_collection_modifyitems(config, items):
+@pytest.fixture(autouse=True)
+def _live_gate(request):
+    """Skip any live test unless DOUBLETAKE_ALLOW_LIVE=1 is explicitly set.
+
+    An API key being present is NOT sufficient — it must be paired with the
+    opt-in flag so live runs are always a conscious decision, not an accident.
+    """
+    if not request.node.get_closest_marker("live"):
+        return
+    if os.getenv("DOUBLETAKE_ALLOW_LIVE") != "1":
+        pytest.skip(
+            "Live tests consume paid API quota and require explicit opt-in. "
+            "Set DOUBLETAKE_ALLOW_LIVE=1 to run them. "
+            "Routine verification: py -3.11 -m pytest -q -m 'not live'",
+        )
     key = "GEMINI_API_KEY" if DEFAULT_SETTINGS.L5_BACKEND == "gemini" else "ANTHROPIC_API_KEY"
     if not os.getenv(key):
-        skip = pytest.mark.skip(reason=f"{key} not set")
-        for item in items:
-            if item.get_closest_marker("live"):
-                item.add_marker(skip)
+        pytest.skip(f"{key} not set")

@@ -1,5 +1,5 @@
 # HANDOFF — DoubleTake
-Last updated: 2026-09-22 by daren-l5 resilience + calibration session
+Last updated: 2026-09-24 by daren-l5 apostrophe-audit/adverb-AoA session (offline, no API calls)
 
 ---
 
@@ -9,30 +9,36 @@ All items below were confirmed by commands run in this session.
 
 | Check | Command | Result |
 |---|---|---|
-| Offline test suite | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 10 deselected** |
-| Offline only | `py -3.11 -m pytest -q -m "not live"` | **119 passed, 10 deselected** |
-| Coverage (offline) | `py -3.11 -m pytest --cov=doubletake --cov-branch -q -k "not live"` | 76% total — layers.py 0%, runner.py 0% |
-| API key | `py -3.11 -c "import os; print(bool(os.environ.get(...)))"` | **NOT SET** |
-| L5_CALIBRATION.md | read file | **EXISTS but PLACEHOLDER** — no real run data |
-| Runner CLI | `py -3.11 -m doubletake.runner --blind tests/fixtures/sample_blind.jsonl` | **Valid JSONL** — 3 items, 3 trace entries each (L0-pre OK, L5 ERROR, L0-post OK) |
-| NotImplementedError stubs | read layers.py | 7 stubs: run_l1, run_l2, run_l3, run_l4, run_l6, run_l7, run_l8 |
-| Git state | `git log --oneline -8` | On daren-l5; 7 commits including all fixes from this session |
-| pytest-cov installed | install attempt | Was **NOT installed** — installed during this session |
+| Offline suite | `py -3.11 -m pytest -q -m "not live"` | **189 passed, 10 deselected** |
+| AoA coverage | `py -3.11 -m doubletake.l2_senses` | see L2 table below |
+| L3 gold-term rank | scratch script over `l5_anchors.jsonl` (pinned in `test_l3.py`) | **8/10** gold terms in top-3 (P2 rank 4; P3 rank 8); re-run after the possessive fix |
+| Corpus MWEs | scratch script over jokes.json + notjokes.json (re-run) | 17/60 items gain an MWE candidate (13 jokes, 4 non-jokes); 3 reach top-3 |
+| Curly-apostrophe negation | `tests/test_l1.py` on the real jokes.json strings | couldn’t / isn’t -> negation; Dan’s -> not negation; curly == ASCII |
+| jokes.json encoding | raw bytes (`od -c`) | **Clean.** 0 U+FFFD; 3 correct U+2019 apostrophes |
+| Live suite / calibration | none | **NOT run this session** |
 
-### Per-module coverage (offline suite, branch mode)
+**Fresh clone needs data first:** `data/` is gitignored. Run `py -3.11 scripts/fetch_aoa.py`
+once before the offline suite; the L2/L3 tests fail loudly (FileNotFoundError) without it.
+WordNet auto-downloads on first use (network, not a paid API).
 
-| Module | Stmts | Miss | Cover |
-|---|---|---|---|
-| `__init__.py` | 1 | 0 | 100% |
-| `config.py` | 18 | 0 | 100% |
-| `corpus.py` | 68 | 4 | 91% |
-| `enums.py` | 53 | 0 | 100% |
-| `l0_scope.py` | 40 | 1 | 97% |
-| `l5_resolution.py` | 80 | 6 | 89% |
-| `layers.py` | 26 | 26 | **0%** |
-| `runner.py` | 76 | 76 | **0%** |
-| `schema.py` | 116 | 1 | 98% |
-| **TOTAL** | **478** | **114** | **76%** |
+### L2 AoA coverage (cumulative %)
+
+Chain: exact -> lowercase -> lemmatized (both directions) -> derived_from_adjective ->
+derived_from_parts -> miss.
+
+| Population | exact | +lowercase | +lemmatized | +adjective | +parts | miss |
+|---|---|---|---|---|---|---|
+| all WordNet lemma names (148,730) | 18.9 | 19.5 | 21.9 | 23.6 | 52.6 | 47.4 |
+| single-word lemmas (79,264) | 35.4 | 36.5 | 41.1 | 44.2 | 51.3 | 48.7 |
+| single-word, semcor_count>0 (17,415) | 71.8 | 72.5 | 79.8 | 84.5 | 88.8 | **11.2** |
+| MWE lemmas (64,243) | 0.0 | 0.0 | 0.0 | 0.0 | 52.5 | 47.5 |
+
+Useful-population miss over three sessions: 27.4% -> 14.9% -> **11.2%**.
+- **Correction:** the first session's claim that "the fallbacks add only +0.8 pts" was WRONG. Stage 3
+  lemmatized only the AoA side, so surface-form queries (washing, assets, diminished) missed.
+  Fixing that alone is worth 7.3 pts (72.5 -> 79.8).
+- derived_from_adjective (adverb -> pertainym adjective): +4.7 pts, including adverbs that
+  previously missed outright. derived_from_parts: +4.3 pts.
 
 ---
 
@@ -48,11 +54,11 @@ All items below were confirmed by commands run in this session.
 |---|---|---|---|
 | L0-pre | **done** | yes (13 tests in test_l0.py) | 97% cov; `isinstance` guard not tested |
 | L0-post | **done** | yes (9 tests in test_l0.py) | Wired; returns NO_SCOPE_MECHANISM until L2–L4 run |
-| L1 | **stub** | none | `run_l1` raises NotImplementedError |
-| L2 | **stub** | none | `run_l2` raises NotImplementedError |
-| L3 | **stub** | none | `run_l3` raises NotImplementedError |
+| L1 | **done** | yes (test_l1.py) | Regex-only genre routing; lemmas/pos_tags left empty (no tagger) |
+| L2 | **done** | yes (test_l2.py) | WordNet + SemCor counts + Kuperman AoA (5-stage chain incl. derived_from_parts); compound splits; MWE n-gram scan |
+| L3 | **done** | yes (test_l3.py) | Age-free; no frequency gate; contrast 0.7 + SemCor balance 0.3; homographs, compound splits, MWEs; 8/10 gold terms in top-3 |
 | L4 | **stub** | none | `run_l4` raises NotImplementedError |
-| L5 | **done** | yes (offline: 119 passed; live: 10 tests, skip without key) | Gemini backend (default); 5xx retry + model fallback chain added (Task 1); resumable calibration script added (Task 2); live calibration NOT RUN — free-tier RPD quota exhausted |
+| L5 | **done**, 4 branches | yes (offline green; live not run this session) | New DECLARATIVE branch (unvalidated); per-genre thresholds; resolving_sense replaces positional sense roles in QA/declarative/definitional prompts |
 | L6 | **stub** | none | `run_l6` raises NotImplementedError |
 | L7 | **stub** | none | `run_l7` raises NotImplementedError |
 | L8 | **stub** | none | `run_l8` raises NotImplementedError |
@@ -106,6 +112,12 @@ All items below were confirmed by commands run in this session.
 - `ARCHITECTURE.md §4 Deviation 1` documents it with rationale
 - No action needed
 
+**n. X1 fixture — RESOLVED**
+- Original X1 ("...large grey mammals") was an invalid L5 fixture: punchline contained no context for the container sense of "trunk", so sense B could never be anchored — a L4 fail, not an L5 one
+- Original X1 moved to `tests/fixtures/l4_anchoring.jsonl` as an L4 anchoring negative (`expected_anchoring_status: ONE_SENSE_ONLY`)
+- New X1 in `l5_anchors.jsonl`: "Why do elephants have a trunk? Because the car's trunk was already full." — `sense_a_anchor="elephants"`, `sense_b_anchor="car's trunk"`, both senses distinct and in-text; punchline fails to explain the proboscis → `expected_l5_status: RESOLUTION_FAIL`
+- Validation test `test_fixture_anchor_quotes_are_substrings_and_distinct` now passes; suite is 130/130 green
+
 ### Additional findings
 
 **i. Live tests don't skip when API key is absent** — RESOLVED, UPDATED
@@ -130,6 +142,60 @@ All items below were confirmed by commands run in this session.
 **m. Bare string comparison in _l0_post_layer** — RESOLVED (fe433c7)
 - `runner.py:99` now uses `AnchoringStatus.PASS` instead of `"PASS"`
 
+### From deterministic-core session (2026-09-24)
+
+**o. P2 label — RESOLVED (1ec48cd).** Relabelled RESOLUTION_PASS: it is a pun. "Explain: to make the plain exit" meets all four README
+L5-OneLiner criteria (ex- + plain is a legitimate resegmentation, the split reading is coherent,
+and "make plain" even echoes the real meaning). No rationale for RESOLUTION_FAIL exists anywhere.
+[Likely] It should be RESOLUTION_PASS. Label NOT changed; owner's call. Either way the
+definitional branch has never been shown a real negative.
+
+**p. QA polarity re-calibration needed.** S1/S2 stored courage (the punchline sense) as sense_a,
+and the QA prompt labelled sense_a "setup". Fixed via `L4Result.resolving_sense`. The 0.46 QA
+threshold was set on data produced by the mislabelled prompt, so it must be re-checked on the
+next live run. Note: at 0.46, polarity=0 can still PASS (other features max 0.55).
+
+**q. Positional prompt labels — RESOLVED for definitional (9ced589).** Dialogue labels were already neutral. Definitional says
+"Sense B (compound-split reading)", and every current resegmentation fixture has the split as
+sense_b, so it's consistent today but not enforced. Dialogue labels are neutral. Only QA and
+declarative were switched to resolving_sense.
+
+**r. L3 SemCor gate — RESOLVED (b8203c5).** Gate removed; SemCor is now a weak ranking feature; D1 reachable. Original note: shingles (every sense has count 0), net as
+net income (0), ex (0). D1, P2, P3 can't reach top-3; P3 is also multiword. Pinned in
+`test_l3.py::test_known_unreachable`. Declarative corpus puns will hit this too.
+
+**s. AoA lowercase stage makes false matches on acronyms.** `AIDS` (disease) gets the AoA of
+`aids` (plural of aid). Small (under 1 pt) but wrong. Not changed.
+
+**t. Corpus encoding — WITHDRAWN (my error).** jokes.json was never corrupted: it has correct
+U+2019 apostrophes (bytes e2 80 99). The "U+FFFD" was the Windows cp1252 console rendering them.
+Real consequence found: the L1 tokenizer and negation regex only accepted ASCII `'`. Fixed in
+b5ee53f + 51dd615.
+
+**u. Question-only QA item.** "How many stories were in the library building?" routes to
+QA_RIDDLE but has no answer clause; the QA prompt assumes there is one.
+
+**v. Kuperman source.** The original crr.ugent.be zip is 404. `fetch_aoa.py` uses the Internet
+Archive capture of `AoA_51715_words.zip` (column AoA_Kup, 31,105 rows vs the paper's 30,121).
+Licence: NoRaRe lists the dataset as CC-BY 4.0 [not verified at source]; not committed anyway.
+
+**w. -ly adverb mis-splits — RESOLVED (49aab03).** Adverbs now take their WordNet pertainym adjective's AoA; 98/102 resolve, 4 become explicit misses. `growling` = grow + ling (non-adverb) is still open. Original note: 102 credible single-word lemmas derive via a
+bogus `ally` split (`comically` = comic + ally, AoA 9.61). Conservative (overestimates age) and
+labelled, but wrong. The candidate fix is a WordNet pertainym stage (adverb -> adjective); not
+built, not asked for. `growling` = grow + ling is the same class of error.
+
+**x. WordNet lacks most corpus idioms.** net_loss, on_the_house, days_are_numbered, rough_patch are
+absent. The n-gram scan can't reach them; those puns only surface as single-token homographs.
+"row between the oarsmen" is not an MWE (row/row is a homograph).
+
+**y. P3's MWE lands on the literal sense.** "Pull yourself together" matches `pull_together`, but
+WordNet's only sense is gather.v.01 (the curtains reading); there's no compose-oneself sense.
+P3 ranks 8th. Pinned in `test_l3.py::test_known_unreachable`.
+
+**z. MWE noise.** Compounds (wine_bottle, night_shift, divorce_lawyer) and phrasal verbs (come_to,
+break_up) also match; they take L3 slots only when contrastive. `build_in` matched "building in"
+via first-token lemmatization.
+
 ---
 
 ## Build order (agreed)
@@ -137,10 +203,10 @@ All items below were confirmed by commands run in this session.
 | Step | Layer | Current status | Notes |
 |---|---|---|---|
 | 1 | L5 | **done** — live calibration pending | Needs API key + `py -3.11 scripts/run_l5_calibration.py` |
-| 2 | L2 | **stub** — next to build | WordNet + SemCor + Kuperman AoA retriever |
+| 2 | L2 | **done** | WordNet + SemCor + Kuperman AoA retriever |
 | 3 | L7 | **stub** | Comprehension, per-age |
-| 4 | L1 | **stub** | Surface analysis + genre routing |
-| 5 | L3 | **stub** | Candidate ranking (age-free) |
+| 4 | L1 | **done** | Surface analysis + genre routing |
+| 5 | L3 | **done** | Candidate ranking (age-free) |
 | 6 | L4 | **stub** | Anchoring |
 | 7 | L8 | **stub** | Appropriateness |
 | 8 | L6 | **stub** — low priority | Leave as L6_SKIPPED unless time allows |
@@ -160,15 +226,19 @@ All items below were confirmed by commands run in this session.
 
 ## Next action
 
-**Task 3 NOT DONE — calibration blocked on free-tier RPD quota.**
+**Calibrate the DECLARATIVE branch from the annotated corpus (owner is annotating jokes.json /
+notjokes.json).** Declarative fixtures come from it: 27 declarative jokes + 17 declarative
+non-jokes. That's enough to set the DECLARATIVE threshold (currently 0.60, UNVALIDATED) from
+per-run ranges, as was done for QA.
 
-The Gemini free-tier daily quota (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20 req/day for `gemini-3.6-flash`) was exhausted by live pytest runs in the previous session. The calibration run made ~19 API calls, all of which returned 429 (no data written, except N1 run=0 which returned INSUFFICIENT_CONTEXT with no LLM call because L4 anchoring failed — no quota consumed).
+Steps:
+1. Annotate each corpus item with an L4 contract (senses, anchor quotes, anchor_relation,
+   anchoring_status, **resolving_sense**) and an expected L5 status.
+2. Add them as fixtures; extend the calibration script to read them.
+3. API-gated, needs explicit approval: re-run L5 calibration. It covers the new declarative
+   items, and QA must be re-checked because the resolving_sense fix changed the QA prompt (issue p).
 
-Steps when quota resets (midnight Pacific):
-1. `py -3.11 scripts/run_l5_calibration.py --probe` — confirm API available
-2. `py -3.11 scripts/run_l5_calibration.py --resume` — picks up where it left off (1 row already in JSONL for N1 run=0)
-
-After calibration data is collected: proceed to L2 (WordNet + SemCor + Kuperman AoA retriever) per the agreed build order.
+Then continue the build order: L7 (comprehension, per-age; reads aoa_estimate + aoa_match), L4.
 
 ---
 
@@ -181,6 +251,181 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
 ## Session log
 
 *(append-only — never rewrite old entries)*
+
+### 2026-09-24 — Apostrophe audit + adverb AoA session (daren-l5), offline, no API calls
+
+Commits: 9fdeabf (apostrophe audit), 49aab03 (adverb AoA).
+
+- **Premise check:** the owner's brief said the negation edit "failed silently". It did in
+  b5ee53f, but 51dd615 landed it. Re-verified on the real jokes.json strings: couldn’t / isn’t ->
+  negation True; Dan’s -> False.
+- **Apostrophe audit (every rule in src/):** `_TOKEN`, `_NEGATION` were already OK. Fixed
+  `_DEFINITION` (head was ASCII-only) and L2 `retrieve()`, whose `isalpha()` dropped every token
+  containing an apostrophe, so possessives (car's in X1, Dan’s in the corpus) never reached L2.
+  L0 is unaffected (NFC keeps ’; 1-3 non-ASCII chars is far under the 0.15 ratio). No scripts
+  touch apostrophes. Tests use the 3 real U+2019 strings from jokes.json and assert curly and
+  ASCII apostrophes analyze identically.
+- **Adverb AoA:** new stage derived_from_adjective via WordNet pertainyms; single-word adverbs are
+  never compound-split. additionally, asymmetrically, basically (no pertainym) and
+  macroscopically (adjective unrated) are now explicit misses.
+- **Figures:** the current-state AoA table is recomputed; the "+0.8 pts" correction is stated
+  there explicitly.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` -> **189 passed, 10 deselected**
+(start: 177). Gold top-3 still 8/10. No live tests, no calibration, no API calls.
+
+### 2026-09-24 — L3 gate / MWE / AoA session (daren-l5), offline, no API calls
+
+Commits: 1ec48cd (P2), 9ced589 (definitional prompt), b5ee53f + 51dd615 (U+2019 tokens/negation;
+b5ee53f's message claims the negation fix, but its edit failed silently and 51dd615 lands it),
+b8203c5 (L3 gate), 22a0c48 (MWE), 0dad86b (AoA derived + stage-3 fix).
+
+- **Corrections to the previous entry:** (1) jokes.json was never mis-encoded (issue t
+  withdrawn). (2) "The fallbacks add only +0.8 pts" was wrong: stage 3 lemmatized only the AoA
+  side, so it missed surface-form queries such as washing/assets/diminished (1,207 credible lemmas).
+- **P2 verdict: yes, a pun.** Relabelled RESOLUTION_PASS. The 5-run calibration (0.865-0.930)
+  now counts as correct.
+- **Definitional prompt** names {resolving_sense}/{other_sense}. A test asserts no named-sense
+  prompt references {sense_a}/{sense_b}.
+- **L3:** gate removed. score = 0.7*contrast + 0.3*balance, balance = (c2+1)/(c1+1). One entry per
+  term in top-k (life was a homograph and a li+fe split). Gold top-3: 7/10 -> 8/10 (D1 reachable).
+- **MWE:** `l2_senses.mwe_spans`: 2-4 gram, exact WordNet lemma names, first-token lemmatized,
+  reflexive -> oneself/dropped (closed class, no idiom list). The scan lives in L2 (WordNet
+  access); L1 stays regex-only and `L1Result.multiword_expressions` stays empty. L3 scores MWE
+  vs literal word readings. Corpus: 17/60 items gain an MWE candidate; 3 reach top-3.
+- **AoA:** derived_from_parts (max of parts) + query-side lemmatization via WordNetLemmatizer.
+  Useful-population miss 27.4% -> 14.9%.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` -> **177 passed, 10 deselected**
+(start: 164). No live tests, no calibration, no API calls.
+
+### 2026-09-24 — Deterministic core session (daren-l5), offline, no API calls
+
+Commits: 47425d4 (calibration doc), 9f300c6 (item 1), 2e2fad9 (item 2), 4e3facd (item 3),
+cafb695 (item 4), d1527f8 (item 5), 9bd6d86 (item 6).
+
+- **Correction to prior entries:** `docs/L5_CALIBRATION.md` was NOT the stale
+  all-INSUFFICIENT report. It was a fresh 5-run report (2026-09-24 20:52 UTC, real scores).
+  Committed as-is in 47425d4.
+- **L5 DECLARATIVE branch:** declarative was routed to the dialogue prompt (speaker-mismatch
+  subscores), not a catch-all. Added `L5DeclarativeResult`, `prompts/l5_declarative.md`
+  (both_readings_available, punchline_sense_is_unexpected, incongruity_present; weights
+  0.30/0.40/0.30, unvalidated). `L5DialogueResult` now accepts DIALOGUE only.
+- **Per-genre thresholds:** `L5_RESOLUTION_THRESHOLDS` replaces `L5_RESOLUTION_THRESHOLD`.
+  QA 0.46: X1 max 0.417 < 0.46 < E1 min 0.507, per run (0.55, from means, would fail E1 on 4/5
+  runs). Others 0.60; DECLARATIVE marked UNVALIDATED in config + ARCHITECTURE.md. No threshold
+  fixes S2. Calibration script's polarity analysis is now computed from the configured threshold.
+- **Polarity inversion:** `L4Result.resolving_sense` (sense_a|sense_b, required when anchoring
+  PASS). `_render_prompt` fills {resolving_sense}/{other_sense}, so the QA and declarative prompts
+  name the punchline sense by gloss. Fixtures: S1/S2 -> sense_a, N1 -> null, rest -> sense_b.
+  `debug_one_call.py` reuses `_render_prompt` (it had its own copy).
+- **L2:** `l2_senses.py`. nltk added to pyproject (3.10.3 installed). SemCor counts via
+  `Lemma.count()`; raw SemCor corpus not downloaded. `scripts/fetch_aoa.py` (sha256-pinned,
+  stdlib xlsx parse) -> `data/aoa_kuperman.csv`; `data/` gitignored. Citation in ARCHITECTURE.md §8.
+- **L1:** `l1_surface.py`, regex only (no spaCy). **L3:** `l3_candidates.py`, age-free; split
+  candidates score on the part-vs-part gap (see module docstring for why).
+- `run_l1`, `run_l2`, `run_l3` wired in layers.py.
+- New open issues o–v.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` -> **164 passed, 10 deselected**
+(baseline at session start: 121). No live tests, no calibration, no API calls.
+
+### 2026-09-24 — Cap fix + truncation surfacing (daren-l5), commit d241418
+
+Follows the root-cause session below. Applied the production fix and made truncation
+a first-class outcome.
+
+- `config.py`: `L5_MAX_OUTPUT_TOKENS = 8192` (was hardcoded 512 in
+  `_call_gemini_single`). Rationale in-code: thinking is charged against the cap and
+  varies 2x; 8192 clears the worst observed (969) with wide margin. Chose raise-the-cap
+  over `ThinkingConfig` deliberately — thinking is likely what separates the polarity
+  minimal pair; not cutting it to save tokens we don't pay for.
+- `enums.py`: added `ResolutionStatus.TRUNCATED_OUTPUT`. (test_enums.py unaffected — it
+  only checks README strings ⊆ enum values; no consumer branches on the status, only
+  layers.py interpolates it into a trace string.)
+- `l5_resolution.py`:
+  - `_call_gemini_single` now takes `max_output_tokens`; detects
+    `finish_reason==MAX_TOKENS` right after the call and returns `truncated=True`
+    WITHOUT a parse retry (retrying just truncates again).
+  - Introduced `_L5Call` NamedTuple (parsed, model_used, fallback_used, retries,
+    truncated, thoughts_tokens) as the chain/dispatcher return, replacing the growing
+    tuple. `_call_gemini_with_chain`/`_complete_json` return it; truncation short-circuits
+    the fallback chain (switching models won't fix a cap hit).
+  - `resolve_l5`: on `truncated`, logs ERROR (item_id + thoughts_token_count + model +
+    cap) and returns `_empty_result(status=TRUNCATED_OUTPUT)`. Renamed
+    `_make_insufficient` → `_empty_result(status=...)` (default INSUFFICIENT_CONTEXT).
+  - Diagnostics sink now also carries `thoughts_tokens`.
+- `scripts/run_l5_calibration.py`: JSONL row + raw file record `finish_reason` and
+  `thoughts_token_count`; raw file persists verbatim `response.text` (fix from prior
+  entry). Added report section "7b. Thinking tokens & truncation" (finish_reason counts,
+  thoughts min/max/mean, cap-headroom / MAX_TOKENS warning).
+- `tests/test_l5.py`: `test_max_tokens_yields_truncated_not_insufficient` — mocked
+  MAX_TOKENS response → TRUNCATED_OUTPUT (not INSUFFICIENT), score None, exactly one
+  `generate_content` call (no parse retry).
+- `scripts/debug_one_call.py`: default cap now reads `L5_MAX_OUTPUT_TOKENS` so it mirrors
+  production.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` → **121 passed, 10
+deselected**. One live S1 call at cap 8192 → `finish_reason=STOP`, thoughts=914,
+output=62, valid JSON, would score → RESOLUTION_PASS.
+
+**NOT done (owner's call, API-gated):** the calibration run itself. Existing
+`runs/l5_calibration.jsonl` has 45 stale all-INSUFFICIENT rows — use `--fresh`.
+`docs/L5_CALIBRATION.md` is uncommitted and holds the stale buggy report; left as-is,
+the fresh run overwrites it.
+
+### 2026-09-24 — INSUFFICIENT_CONTEXT root-cause session (daren-l5)
+
+**Root cause of the all-45-INSUFFICIENT_CONTEXT calibration run — FOUND and VERIFIED (2 live S1 calls):**
+
+- `max_output_tokens=512` in `_call_gemini_single`'s `GenerateContentConfig` is too
+  small. Gemini 3.x counts internal **thinking tokens** against that cap. Thinking
+  consumed the budget → `finish_reason=MAX_TOKENS` → `response.text` truncated mid-JSON
+  (`'{\n  "polarity_or'`, 16 chars) → `JSONDecodeError` → both parse attempts fail →
+  INSUFFICIENT_CONTEXT.
+- Verified via new `scripts/debug_one_call.py` (reproduces the exact production config,
+  dumps the untouched response):
+  - cap 512:  `MAX_TOKENS`, thoughts=487, candidates=7, text=16 chars → fails.
+  - cap 2048: `STOP`, full valid JSON, parses, score 0.67 → RESOLUTION_PASS (expected).
+  - thinking tokens varied 487 → 969 between two identical temp-0 calls — cost is
+    variable; cap must clear the worst case.
+
+**Corrected `retries` semantics (this misreading cost the prior session):**
+
+- `retries` counts **only 5xx backoff sleeps** (`_call_gemini_single` line ~297). It is
+  NOT incremented by the JSON-parse / missing-field retry (the inner `parse_attempt`
+  loop). Therefore `retries=0` does NOT mean "the missing-subscore retry never ran" —
+  that retry DID run (both attempts) and both failed on truncated JSON. The prior
+  handoff's inference from `retries=0` was wrong.
+- The parse-failure path to INSUFFICIENT_CONTEXT: `_call_gemini_single` returns
+  `(None, 0, None)` → `_call_gemini_with_chain` returns `(None, model, False, 0)` (skips
+  fallback, correct) → `resolve_l5` calls `_make_insufficient(..., retries=0)`.
+
+**Offline fix applied — raw-response logger (was writing garbage):**
+
+- The old `runs/raw/*.json` files contained `result.subscores` (i.e. `{}` for every
+  INSUFFICIENT_CONTEXT) — NOT the model's response. 45 paid calls produced zero usable
+  evidence of what Gemini returned.
+- Fix: added optional `diagnostics: dict` sink threaded through `resolve_l5` →
+  `_complete_json` → `_call_gemini_with_chain` → `_call_gemini_single`. The Gemini path
+  fills it with verbatim `raw_text` and `finish_reason`. Deliberately NOT added to the
+  frozen `L5Result` (would bloat every serialized blind-run record). All new params
+  default `None` → backward-compatible.
+- `run_l5_calibration.py`: raw file now persists `{raw_text, finish_reason, subscores}`;
+  JSONL row now includes `finish_reason`.
+- `scripts/debug_one_call.py` added (one-call diagnostic; prints finish_reason,
+  usage_metadata incl. thoughts_token_count, len(text), verbatim text, parts,
+  function_calls).
+
+**NOT done (awaiting decision):** the production `max_output_tokens` cap fix itself.
+One variable at a time — raise cap vs. set `thinking_budget` is an open choice. See
+Next action.
+
+**Verified this session:** `py -3.11 -m pytest -q -m "not live"` → **120 passed, 10
+deselected**. Two live S1 debug calls (cap 512 fails, cap 2048 passes).
+
+**Unrelated:** upgraded Claude Code CLI 2.1.170 → 2.1.282 (npm global; winget does not
+manage this install).
 
 ### 2026-09-21 — Audit session
 - First session to produce HANDOFF.md; no prior handoff existed
@@ -215,6 +460,32 @@ This file has one owner: **Daren**. Other contributors do not edit HANDOFF.md; t
   - L5_BACKEND typed as Literal["gemini", "anthropic"]; dispatcher raises ValueError on unknown backend; one test confirms invalid value rejected at config load
 - Suite state: 110 passed, 10 deselected (live tests skip without GEMINI_API_KEY)
 - Live calibration NOT run — requires GEMINI_API_KEY
+
+### 2026-09-23 — X1 replacement session (daren-l5)
+
+**X1 replaced and original moved to L4 fixture set (issue n resolved):**
+
+- Previous session's proposed X1 replacements were all positives (container sense used to answer the question = E1 restated). A relevance negative needs both senses anchored AND a punchline that fails to resolve.
+- D1 text corrected to match spec (Danny asks why Gerry is glum; Gerry has shingles; the doctor prescribed aluminum siding). Previous text ("Wood or aluminum siding? No, it's a skin rash!") had wrong structure. Anchors unchanged: `"bad case of shingles"` / `"Aluminum siding"`.
+- New X1: `"Why do elephants have a trunk? Because the car's trunk was already full."` — `sense_a_anchor="elephants"`, `sense_b_anchor="car's trunk"`. Both senses present with distinct spans; punchline (car's storage trunk was full) explains nothing about a proboscis → RESOLUTION_FAIL. This is a genuine L5 negative, not an E1 restatement.
+- Original X1 (`"...large grey mammals"`) saved to `tests/fixtures/l4_anchoring.jsonl` as L4 anchoring negative (`expected_anchoring_status: ONE_SENSE_ONLY`). Valid test of the wrong layer — not deleted.
+
+**Suite state (VERIFIED this session, both runs):** `py -3.11 -m pytest -q` → **130 passed, 0 failed** (120 offline + 10 live), exit 0.
+
+### 2026-09-23 — Anchor-span fix session (daren-l5)
+
+**Root cause identified:** All 8 non-resegmentation PASS-status fixtures had `sense_a_anchor_quote == sense_b_anchor_quote` (the ambiguous term itself in both fields) instead of distinct context spans. Per ARCHITECTURE.md Decision 2, identical anchor spans are only legal for `resegmentation`. The previous live-test "passes" for A1 and P2 were the only two fixtures that didn't trigger this structural bug; L5's QA and dialogue branches have NEVER been exercised against a live model.
+
+**Changes this session:**
+
+- `ARCHITECTURE.md`: Added "Anchor-quote definition" subsection to Decision 2, clarifying that anchor quotes are context spans activating each sense, not the ambiguous term itself.
+- `src/doubletake/schema.py`: Added docstring to `L4Result` explaining the context-span requirement and the resegmentation exception.
+- `tests/fixtures/l5_anchors.jsonl`: Fixed context spans for S1, S2, E1, D1, P1, P3. D1 text also updated to include the required context phrases. A1, P2, N1 unchanged. X1 unchanged (awaiting owner approval on replacement — see issue n).
+- `src/doubletake/l5_resolution.py`: Added `WARNING` log to the existing `anchoring_status != PASS` short-circuit; added new short-circuit guard for identical anchor spans where `anchor_relation != RESEGMENTATION`, with `WARNING` log naming the item and reason.
+- `tests/test_l5.py`: Updated `_qa_l4()`, `_dialogue_l4()`, `_qa_record_for_routing()` to use distinct anchor spans; updated `test_fixture_item_offline` to handle the new short-circuit case; added `test_fixture_anchor_quotes_are_substrings_and_distinct` validation test (offline, no LLM, fails intentionally for X1).
+- `tests/test_l5_missing_subscores.py`: Updated `_qa_record()` to use distinct anchor spans.
+
+**Suite state (VERIFIED this session):** 119 passed, **1 failed** (`test_fixture_anchor_quotes_are_substrings_and_distinct` on X1 — intentional), 10 deselected.
 
 ### 2026-09-22 — Resilience + calibration session (daren-l5)
 

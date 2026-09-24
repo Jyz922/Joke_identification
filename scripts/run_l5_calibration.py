@@ -57,6 +57,7 @@ def _build_record(fixture: dict) -> tuple[AnalysisRecord, str]:
         sense_b_anchor_quote=l4d["sense_b_anchor_quote"],
         anchor_relation=l4d.get("anchor_relation"),
         anchoring_status=l4d["anchoring_status"],
+        resolving_sense=l4d.get("resolving_sense"),
     )
     record = AnalysisRecord(
         item_id=fixture["id"], text=fixture["text"], target_ages=[8]
@@ -130,19 +131,33 @@ def run(fresh: bool) -> None:
                     continue
 
                 record, term = _build_record(fixture)
+                diag: dict = {}
                 t0 = time.monotonic()
                 try:
-                    result = resolve_l5(record, DEFAULT_SETTINGS, ambiguous_term=term)
+                    result = resolve_l5(
+                        record, DEFAULT_SETTINGS, ambiguous_term=term, diagnostics=diag
+                    )
                 except Exception as e:
                     print(f"  {fixture['id']:3s} run={run_idx} ERROR ({type(e).__name__}): {e}")
                     continue  # not written; will retry on resume
 
                 elapsed_ms = round((time.monotonic() - t0) * 1000)
 
-                # Save raw LLM output (subscores as returned)
+                # Persist the model's ACTUAL response (verbatim text + finish_reason),
+                # not our parsed subscores — otherwise failed parses leave no evidence.
+                # diag is empty for short-circuited items (no LLM call, e.g. N1).
                 raw_path = _RAW_DIR / f"{fixture['id']}_{run_idx:02d}.json"
                 raw_path.write_text(
-                    json.dumps(result.subscores, indent=2, default=str),
+                    json.dumps(
+                        {
+                            "raw_text": diag.get("raw_text", ""),
+                            "finish_reason": diag.get("finish_reason", ""),
+                            "thoughts_token_count": diag.get("thoughts_tokens"),
+                            "subscores": result.subscores,
+                        },
+                        indent=2,
+                        default=str,
+                    ),
                     encoding="utf-8",
                 )
 
@@ -155,6 +170,8 @@ def run(fresh: bool) -> None:
                     "subscores": result.subscores,
                     "resolution_score": result.resolution_score,
                     "verdict": str(result.resolution_status),
+                    "finish_reason": diag.get("finish_reason", ""),
+                    "thoughts_token_count": diag.get("thoughts_tokens"),
                     "retries": result.retries,
                     "wall_clock_ms": elapsed_ms,
                     "raw_response_path": str(raw_path.relative_to(Path(__file__).parent.parent)),
@@ -205,7 +222,7 @@ def _write_calibration_doc() -> None:
         f"Primary model: `{DEFAULT_SETTINGS.L5_MODEL_GEMINI}`  ",
         f"Fallback chain: `{DEFAULT_SETTINGS.L5_MODEL_GEMINI_CHAIN}`  ",
         f"Target runs: {_N_RUNS}  ",
-        f"Threshold: {DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}  ",
+        f"Thresholds: { {str(g): t for g, t in DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLDS.items()} }  ",
         "",
     ]
 
@@ -323,13 +340,18 @@ def _write_calibration_doc() -> None:
 
     # --- Q3: Does polarity alone determine the verdict? ---
     lines += ["## 3. Does polarity alone determine the verdict?", ""]
+    qa_t = DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLDS[Genre.QA_RIDDLE]
+    pol_w = DEFAULT_SETTINGS.L5_QA_WEIGHTS["polarity_or_direction"]
+    others_max = 1.0 - pol_w
     lines += [
-        f"With weight `polarity_or_direction = 0.45` and threshold `{DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD}`:",
+        f"With weight `polarity_or_direction = {pol_w}` and QA threshold `{qa_t}`:",
         "",
-        "- If `polarity = 0.0`: maximum score from other four features = 0.55 < 0.60 → **always FAIL** regardless of others.",
-        "- If `polarity = 1.0`: score ≥ 0.45. Needs other features ≥ 0.15 for PASS at threshold 0.60.",
-        f"  - Threshold ≤ 0.45 would make polarity=1 a guaranteed PASS.",
-        f"  - Current threshold 0.60 is **not inert** — other features contribute 0.15 to tip a borderline case.",
+        f"- If `polarity = 0.0`: maximum score from other four features = {others_max:.2f}"
+        + (f" < {qa_t} → **always FAIL** regardless of others." if others_max < qa_t
+           else f" ≥ {qa_t} → can still PASS on the other features alone."),
+        f"- If `polarity = 1.0`: score ≥ {pol_w}"
+        + (" → **guaranteed PASS**." if pol_w >= qa_t
+           else f". Needs other features ≥ {qa_t - pol_w:.2f} for PASS."),
         "",
     ]
 
@@ -460,6 +482,49 @@ def _write_calibration_doc() -> None:
         if n_insufficient_schema > 0:
             schema_items = [row["item_id"] for row in insufficient if row["item_id"] != "N1"]
             lines += [f"  Items with unexpected INSUFFICIENT_CONTEXT: {schema_items}", ""]
+
+    # --- Q7b: Thinking-token distribution & truncation check ---
+    lines += ["## 7b. Thinking tokens & truncation (proves the cap held)", ""]
+    thoughts = [
+        row["thoughts_token_count"]
+        for row in all_rows
+        if row.get("thoughts_token_count") is not None
+    ]
+    finish_counts: dict[str, int] = {}
+    for row in all_rows:
+        fr = row.get("finish_reason") or "(none)"
+        finish_counts[fr] = finish_counts.get(fr, 0) + 1
+    n_truncated = sum(
+        1 for row in all_rows
+        if "MAX_TOKENS" in (row.get("finish_reason") or "")
+    )
+
+    if not all_rows:
+        lines += ["*No data yet.*", ""]
+    else:
+        lines += [f"- finish_reason counts: {finish_counts}", ""]
+        if thoughts:
+            lines += [
+                f"- thoughts_token_count over {len(thoughts)} model calls: "
+                f"min {min(thoughts)}, max {max(thoughts)}, "
+                f"mean {sum(thoughts)/len(thoughts):.0f}",
+                f"- Configured cap `L5_MAX_OUTPUT_TOKENS` = "
+                f"{DEFAULT_SETTINGS.L5_MAX_OUTPUT_TOKENS}",
+                "",
+            ]
+            if max(thoughts) >= DEFAULT_SETTINGS.L5_MAX_OUTPUT_TOKENS:
+                lines += ["**WARNING: max thinking tokens met or exceeded the cap — "
+                          "raise `L5_MAX_OUTPUT_TOKENS`.**", ""]
+            else:
+                headroom = DEFAULT_SETTINGS.L5_MAX_OUTPUT_TOKENS - max(thoughts)
+                lines += [f"Cap held: {headroom} tokens of headroom above the worst "
+                          "observed thinking cost.", ""]
+        else:
+            lines += ["*No thinking-token data recorded (all rows pre-date the fix "
+                      "or were short-circuited).*", ""]
+        if n_truncated:
+            lines += [f"**{n_truncated} TRUNCATED_OUTPUT row(s) — output was cut off "
+                      "mid-JSON. These are truncations, not model verdicts.**", ""]
 
     # --- Q8: Recommendation ---
     lines += ["## 8. Recommendation", ""]

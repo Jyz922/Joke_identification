@@ -43,6 +43,10 @@ class SenseEntry(BaseModel):
     sense_frequency: Optional[float] = None
     aoa_estimate: Optional[float] = None
     source: str
+    lexname: Optional[str] = None          # WordNet lexicographer file, e.g. noun.body
+    semcor_count: Optional[int] = None     # WordNet Lemma.count() (SemCor tag count)
+    # Which AoA fallback stage matched: exact | lowercase | lemmatized | miss.
+    aoa_match: Optional[str] = None
 
 
 class CandidateEntry(BaseModel):
@@ -84,6 +88,20 @@ class L3Result(BaseModel):
 
 
 class L4Result(BaseModel):
+    """L4 anchoring result.
+
+    sense_a_anchor_quote and sense_b_anchor_quote are CONTEXT SPANS: exact
+    substrings of the item text that establish each sense of the ambiguous term,
+    not the ambiguous term itself.  They must be distinct unless
+    anchor_relation is RESEGMENTATION (compound-split: both senses anchor to
+    the compound word, so identical spans are correct and expected).
+
+    resolving_sense names which of sense_a / sense_b the punchline resolves
+    to.  a/b order carries NO meaning: prompts must read the punchline sense
+    through this field, never by position.  Required when anchoring_status is
+    PASS (L5 runs only then).
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     sense_a: str
@@ -92,6 +110,13 @@ class L4Result(BaseModel):
     sense_b_anchor_quote: str
     anchor_relation: Optional[AnchorRelation] = None
     anchoring_status: AnchoringStatus
+    resolving_sense: Optional[Literal["sense_a", "sense_b"]] = None
+
+    @model_validator(mode="after")
+    def _pass_requires_resolving_sense(self) -> "L4Result":
+        if self.anchoring_status == AnchoringStatus.PASS and self.resolving_sense is None:
+            raise ValueError("resolving_sense is required when anchoring_status is PASS")
+        return self
 
 
 class L5QAResult(BaseModel):
@@ -134,7 +159,7 @@ class L5DefinitionalResult(BaseModel):
 
 
 class L5DialogueResult(BaseModel):
-    """Resolution result for DIALOGUE_MISUNDERSTANDING and DECLARATIVE jokes.
+    """Resolution result for DIALOGUE_MISUNDERSTANDING jokes.
 
     Subscores: misunderstanding_plausible, contrast_clear, speaker_intention_clear.
     resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
@@ -142,7 +167,26 @@ class L5DialogueResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    genre: Literal[Genre.DIALOGUE_MISUNDERSTANDING, Genre.DECLARATIVE]
+    genre: Literal[Genre.DIALOGUE_MISUNDERSTANDING]
+    resolution_status: ResolutionStatus
+    resolution_score: Optional[float] = None
+    subscores: dict[str, float]
+    model_used: str = ""
+    fallback_used: bool = False
+    retries: int = 0
+
+
+class L5DeclarativeResult(BaseModel):
+    """Resolution result for DECLARATIVE one-liners.
+
+    Subscores: both_readings_available, punchline_sense_is_unexpected,
+    incongruity_present.
+    resolution_score is None for INSUFFICIENT_CONTEXT (incomplete LLM response).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    genre: Literal[Genre.DECLARATIVE]
     resolution_status: ResolutionStatus
     resolution_score: Optional[float] = None
     subscores: dict[str, float]
@@ -152,7 +196,7 @@ class L5DialogueResult(BaseModel):
 
 
 L5Result = Annotated[
-    Union[L5QAResult, L5DefinitionalResult, L5DialogueResult],
+    Union[L5QAResult, L5DefinitionalResult, L5DialogueResult, L5DeclarativeResult],
     Field(discriminator="genre"),
 ]
 

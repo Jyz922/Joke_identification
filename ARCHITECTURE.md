@@ -110,6 +110,15 @@ Every field in the instantiated branch is present and non-null.  Absent fields a
 
 ## 6. L5 definitional branch: same-span anchor acceptance (Decision 2)
 
+### Anchor-quote definition
+
+`sense_a_anchor_quote` and `sense_b_anchor_quote` in `L4Result` are **context spans** — exact substrings of the item text that activate each sense of the ambiguous term, not the ambiguous term itself.
+
+- **Correct:** for *"Why do cows wear bells? Because their horns don't work,"* the animal-horn sense is anchored by `"cows"` (establishing livestock context) and the vehicle-horn sense by `"don't work"` (establishing device-failure context).
+- **Wrong:** using `"horns"` for both — that is the ambiguous term, not a context span.
+
+When both senses of a resegmentation (compound-split) item anchor to the same surface token — the compound word itself — `sense_a_anchor_quote == sense_b_anchor_quote` is correct and expected.  Every other case of identical anchor quotes indicates that L4 returned the ambiguous term in both fields instead of identifying distinct context spans.  L5 detects this and short-circuits to `INSUFFICIENT_CONTEXT` with a `WARNING` log rather than making an LLM call with ambiguous anchor evidence.
+
 ### The problem
 
 For compound-split jokes (e.g. *Autobiography: when your car starts telling you about its life*), both senses anchor to the same surface token — the compound word itself.  L4 therefore sets `sense_a_anchor_quote == sense_b_anchor_quote`.  A naïve L5 implementation that rejects same-span anchors as "unresolved" would fail every compound-split item.
@@ -148,10 +157,33 @@ Change `L5_BACKEND = "anthropic"` in `Settings` (or override in tests).  The `_c
 
 ---
 
-### Deviation 2 — L5_RESOLUTION_THRESHOLD added (not named in README)
+### Deviation 2 — L5_RESOLUTION_THRESHOLDS added, per genre (not named in README)
 
 **README says:** *the weighted resolution score formula, but no pass/fail threshold.*
 
-**Implementation:** `L5_RESOLUTION_THRESHOLD = 0.60` is declared in `Settings` as the minimum weighted score required for a `RESOLUTION_PASS` verdict.
+**Implementation:** `L5_RESOLUTION_THRESHOLDS` in `Settings` maps each genre to the minimum weighted score required for a `RESOLUTION_PASS` verdict:
 
-**Reason:** without a named threshold, every implementation would embed the cut-off as a magic number inside L5 logic, making it invisible and non-tunable.  Declaring it in `config.py` gives it a single authoritative home, a name, and a docstring so it can be adjusted during evaluation without touching layer logic.
+| Genre | Threshold | Basis |
+|---|---|---|
+| QA_RIDDLE | 0.46 | 5-run calibration: X1 (negative) max 0.417, E1 (positive) min 0.507. Set from per-run ranges, not means — verdicts are per run. |
+| DEFINITIONAL_ONELINER | 0.60 | Positives only (A1 0.935; P2 0.865–0.930, relabelled PASS 2026-09-24). No validated negative. |
+| DIALOGUE_MISUNDERSTANDING | 0.60 | Positives only (D1, P3). No validated negative. |
+| DECLARATIVE | 0.60 | **UNVALIDATED** — no declarative item has been scored live. Placeholder until declarative jokes/non-jokes from the annotated corpus are calibrated. |
+
+No QA threshold separates S1 (positive, 0.58–0.68) from S2 (negative, 0.59–0.86). That inversion comes from how the L4 fixtures label the senses, not from the cut-off.
+
+**Reason:** without a named threshold, every implementation would embed the cut-off as a magic number inside L5 logic, making it invisible and non-tunable.  Per-genre because each branch has a different subscore set, so scores land on different scales (QA 0.27–0.86 vs definitional/dialogue 0.86–0.94 in calibration).
+
+---
+
+## 8. L2 lexical data sources (Decision 4)
+
+**Sources, all deterministic, cached under `data/` (gitignored):**
+
+- **WordNet 3.0** via nltk. It downloads to `data/nltk_data/` the first time it is used. Each sense carries synset id, gloss, POS, `lexname()`.
+- **SemCor tag counts** via WordNet `Lemma.count()`. That is WordNet's cntlist, the per-sense tag frequency from the SemCor semantic concordance. The raw SemCor corpus is not downloaded because nothing needs it.
+- **Age of acquisition:** Kuperman, V., Stadthagen-Gonzalez, H., & Brysbaert, M. (2012). *Age-of-acquisition ratings for 30,000 English words.* Behavior Research Methods, 44(4), 978–990. Fetched by `scripts/fetch_aoa.py` (sha256-pinned) from the Ghent CRR `AoA_51715_words.zip` (Internet Archive capture, 2022-12-07; the original crr.ugent.be URL is 404). Only the `AoA_Kup` column is used (31,105 rated surface forms). **Not committed** to the repo: every clone runs the fetch script once.
+
+**AoA join fallback chain** (`l2_senses.aoa_lookup`): exact → lowercase → lemmatized (both directions: AoA words indexed by base form, *and* the query reduced to its shortest WordNet base) → derived_from_adjective (single-word WordNet adverb: AoA of its pertainym adjective, e.g. comically → comical; adverbs are never compound-split) → derived_from_parts (compound or MWE: MAX of the parts' AoA, since the later-learned part gates comprehension) → miss. Every `SenseEntry` records which stage matched in `aoa_match`, so a miss reaches L7 as an explicit miss rather than a silent gap. Run `py -3.11 -m doubletake.l2_senses` for the stage-by-stage coverage report.
+
+**Compound splits** (`l2_senses.compound_splits`): two-way splits where both halves are exact WordNet lemma names (autobiography → auto + biography). The part-senses are emitted with `source="wordnet_split:<a>+<b>"`, which lets L3 reach the resegmentation case.

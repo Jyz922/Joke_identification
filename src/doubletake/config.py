@@ -8,9 +8,11 @@ Deliberate deviations from README
    age 12.  Candidate ranking must be age-independent; per-age effects are
    handled in L7 (comprehension assessment) instead.
 
-2. L5_RESOLUTION_THRESHOLD: the README specifies the QA weight formula but
-   names no pass/fail cut-off.  The threshold is declared here as 0.60 so
-   it has a single home and can be tuned without touching L5 logic.
+2. L5_RESOLUTION_THRESHOLDS: the README specifies the QA weight formula but
+   names no pass/fail cut-off.  Cut-offs are declared here, one per genre,
+   so they have a single home and can be tuned without touching L5 logic.
+   Per-genre because each branch has a different subscore set and the
+   scores land on different scales (see docs/L5_CALIBRATION.md).
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
+
+from .enums import Genre
 
 
 class Settings(BaseModel):
@@ -57,6 +61,15 @@ class Settings(BaseModel):
     L5_MODEL_GEMINI: str = "gemini-3.6-flash"
     # Ordered fallback chain tried after the primary exhausts its 5xx retries.
     L5_MODEL_GEMINI_CHAIN: list[str] = ["gemini-3.8-flash"]
+    L5_MODEL_ANTHROPIC: str = "claude-sonnet-5"
+    # Max output tokens per Gemini call. Gemini 3.x counts THINKING tokens
+    # against this cap — measured thinking was 487 then 969 on the same temp-0
+    # prompt (2x variance), and the dialogue/definitional branches have longer,
+    # untested prompts. 8192 leaves ample margin; we pay for tokens generated,
+    # not the cap. Do NOT lower to "save" tokens: too small a cap truncates the
+    # JSON mid-emit (finish_reason=MAX_TOKENS) and used to masquerade as a
+    # parse failure — see ResolutionStatus.TRUNCATED_OUTPUT.
+    L5_MAX_OUTPUT_TOKENS: int = 8192
 
     # --- L5 QA resolution ------------------------------------------------
     # Weights must sum to 1.0 (asserted below).
@@ -67,10 +80,23 @@ class Settings(BaseModel):
         "agent": 0.10,
         "tense_aspect": 0.05,
     }
-    # Pass/fail cut-off for the weighted resolution score.
-    # Not named in README — declared here as a single source of truth.
-    # See module docstring, deviation 2.
-    L5_RESOLUTION_THRESHOLD: float = 0.60
+    # Per-genre pass/fail cut-off for the weighted resolution score.
+    # Not named in README — see module docstring, deviation 2.
+    # Verdicts are per run, so cut-offs are set from per-run ranges, not means.
+    L5_RESOLUTION_THRESHOLDS: dict[Genre, float] = {
+        # 5-run calibration: X1 (negative) max 0.417, E1 (positive) min 0.507.
+        # 0.46 separates them on every run. NO threshold fixes S2 (negative,
+        # 0.59-0.86 > S1 positive's 0.58-0.68): that is sense-labelling
+        # (polarity inversion), not threshold.
+        Genre.QA_RIDDLE: 0.46,
+        # A1 0.935 stable; P2 0.865-0.930 (both positives). No validated negative yet.
+        Genre.DEFINITIONAL_ONELINER: 0.60,
+        # D1 0.858-0.927, P3 0.897-0.917. Positives only; no negative yet.
+        Genre.DIALOGUE_MISUNDERSTANDING: 0.60,
+        # UNVALIDATED: no declarative item has been scored live. Placeholder
+        # until the annotated corpus's declarative jokes/non-jokes are run.
+        Genre.DECLARATIVE: 0.60,
+    }
     # Pause between API calls in the calibration script.
     # Free-tier Gemini is ~10–15 req/min → 6 s keeps us well inside the limit.
     L5_CALL_PAUSE_SECONDS: float = 6.0
@@ -81,6 +107,8 @@ class Settings(BaseModel):
         assert abs(total - 1.0) < 1e-9, (
             f"L5_QA_WEIGHTS must sum to 1.0, got {total:.6f}"
         )
+        missing = set(Genre) - self.L5_RESOLUTION_THRESHOLDS.keys()
+        assert not missing, f"L5_RESOLUTION_THRESHOLDS missing genres: {missing}"
         return self
 
 

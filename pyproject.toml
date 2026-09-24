@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2",
     "anthropic>=0.40",
     "google-genai>=2.0",
+    "nltk>=3.8",
 ]
 
 [project.optional-dependencies]

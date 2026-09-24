@@ -9,11 +9,11 @@ Assess the joke below on five dimensions. Each dimension score must be a float f
 
 **Ambiguous term:** {ambiguous_term}
 
-**Sense A (setup reading):** {sense_a}
-Anchored at: "{sense_a_anchor_quote}"
+**Setup sense (the reading the punchline switches away from):** {other_sense}
+Anchored at: "{other_sense_anchor_quote}"
 
-**Sense B (punchline reading):** {sense_b}
-Anchored at: "{sense_b_anchor_quote}"
+**Punchline sense (the reading the punchline resolves to):** {resolving_sense}
+Anchored at: "{resolving_sense_anchor_quote}"
 
 **Anchor relation:** {anchor_relation}
 

@@ -11,20 +11,24 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.genai.errors import ClientError as GeminiClientError
 from google.genai.errors import ServerError as GeminiServerError
+from google.genai.types import FinishReason
 from pydantic import ValidationError
 
 from doubletake.config import DEFAULT_SETTINGS, Settings
 from doubletake.enums import AnchorRelation, AnchoringStatus, Genre, ResolutionStatus
 from doubletake.l5_resolution import (
+    _L5_DECLARATIVE_WEIGHTS,
     _L5_DEFINITIONAL_WEIGHTS,
     _L5_DIALOGUE_WEIGHTS,
     _gemini_generate,
+    _render_prompt,
     resolve_l5,
 )
 from doubletake.schema import (
     AnalysisRecord,
     L1Result,
     L4Result,
+    L5DeclarativeResult,
     L5DefinitionalResult,
     L5DialogueResult,
     L5QAResult,
@@ -89,6 +93,7 @@ def _build_l4(data: dict[str, Any]) -> L4Result:
         sense_b_anchor_quote=data["sense_b_anchor_quote"],
         anchor_relation=data.get("anchor_relation"),
         anchoring_status=data["anchoring_status"],
+        resolving_sense=data.get("resolving_sense"),
     )
 
 
@@ -129,14 +134,23 @@ class TestL5Schema:
         )
         assert r.genre == Genre.DIALOGUE_MISUNDERSTANDING
 
-    def test_dialogue_result_for_declarative_genre(self) -> None:
-        r = L5DialogueResult(
+    def test_declarative_result_construction(self) -> None:
+        r = L5DeclarativeResult(
             genre=Genre.DECLARATIVE,
             resolution_status=ResolutionStatus.RESOLUTION_FAIL,
             resolution_score=0.30,
-            subscores={},
+            subscores={"both_readings_available": 0.3,
+                       "punchline_sense_is_unexpected": 0.3, "incongruity_present": 0.3},
         )
         assert r.genre == Genre.DECLARATIVE
+
+    def test_dialogue_result_rejects_declarative_genre(self) -> None:
+        with pytest.raises(ValidationError):
+            L5DialogueResult(
+                genre=Genre.DECLARATIVE,
+                resolution_status=ResolutionStatus.RESOLUTION_FAIL,
+                subscores={},
+            )
 
     def test_frozen_qa_result_rejects_mutation(self) -> None:
         r = L5QAResult(
@@ -186,9 +200,10 @@ class TestResolveL5Offline:
             sense_a="courage",
             sense_a_anchor_quote="no guts",
             sense_b="internal organs",
-            sense_b_anchor_quote="no guts",
+            sense_b_anchor_quote="skeletons",
             anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_a",
         )
 
     def _definitional_l4(self) -> L4Result:
@@ -199,6 +214,7 @@ class TestResolveL5Offline:
             sense_b_anchor_quote="autobiography",  # same-span — resegmentation
             anchor_relation=AnchorRelation.RESEGMENTATION,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_b",
         )
 
     def _dialogue_l4(self) -> L4Result:
@@ -206,9 +222,10 @@ class TestResolveL5Offline:
             sense_a="compose oneself emotionally",
             sense_a_anchor_quote="Pull yourself together",
             sense_b="physically close curtains by pulling",
-            sense_b_anchor_quote="Pull yourself together",
+            sense_b_anchor_quote="pair of curtains",
             anchor_relation=AnchorRelation.SPEAKER_MISMATCH,
             anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_b",
         )
 
     def test_qa_pass_with_high_scores(self) -> None:
@@ -224,7 +241,7 @@ class TestResolveL5Offline:
         )
         assert isinstance(result, L5QAResult)
         assert result.resolution_status == ResolutionStatus.RESOLUTION_PASS
-        assert result.resolution_score > DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLD
+        assert result.resolution_score > DEFAULT_SETTINGS.L5_RESOLUTION_THRESHOLDS[Genre.QA_RIDDLE]
 
     def test_qa_fail_with_low_scores(self) -> None:
         record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
@@ -296,6 +313,28 @@ class TestResolveL5Offline:
         )
         assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT
 
+    def test_max_tokens_yields_truncated_not_insufficient(self) -> None:
+        """finish_reason=MAX_TOKENS must map to TRUNCATED_OUTPUT, distinct from
+        a parse failure, and must NOT consume a parse retry (one model call)."""
+        record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
+
+        truncated = MagicMock()
+        truncated.text = '{"polarity_or'  # cut off mid-JSON
+        truncated.candidates = [MagicMock(finish_reason=FinishReason.MAX_TOKENS)]
+        truncated.usage_metadata = MagicMock(thoughts_token_count=487)
+
+        client = MagicMock()
+        client.models.generate_content.return_value = truncated
+
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS, ambiguous_term="guts", client=client,
+        )
+        assert result.resolution_status == ResolutionStatus.TRUNCATED_OUTPUT
+        assert result.resolution_status != ResolutionStatus.INSUFFICIENT_CONTEXT
+        assert result.resolution_score is None
+        # No parse retry, no fallback — exactly one model call.
+        client.models.generate_content.assert_called_once()
+
     def test_retry_succeeds_on_second_attempt(self) -> None:
         """First response is malformed; second is valid — must return a real verdict."""
         record = _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4())
@@ -355,6 +394,77 @@ class TestResolveL5Offline:
         assert isinstance(result, L5DialogueResult)
         assert abs(result.resolution_score - 1.0) < 1e-4
 
+    def test_prompt_ignores_sense_order(self) -> None:
+        """Swapping sense_a/sense_b (and resolving_sense with them) renders the
+        identical QA prompt — polarity can't flip on fixture ordering."""
+        l4 = self._qa_l4()
+        swapped = L4Result(
+            sense_a=l4.sense_b, sense_a_anchor_quote=l4.sense_b_anchor_quote,
+            sense_b=l4.sense_a, sense_b_anchor_quote=l4.sense_a_anchor_quote,
+            anchor_relation=l4.anchor_relation, anchoring_status=l4.anchoring_status,
+            resolving_sense="sense_b" if l4.resolving_sense == "sense_a" else "sense_a",
+        )
+        a = _render_prompt(Genre.QA_RIDDLE, self._QA_TEXT, "guts", l4)
+        b = _render_prompt(Genre.QA_RIDDLE, self._QA_TEXT, "guts", swapped)
+        assert a == b
+        assert "{" + "resolving_sense}" not in a
+        assert "Punchline sense (the reading the punchline resolves to):** courage" in a
+
+    @pytest.mark.parametrize("genre", [Genre.DEFINITIONAL_ONELINER, Genre.DECLARATIVE])
+    def test_named_sense_prompts_never_reference_position(self, genre: Genre) -> None:
+        template = (Path(__file__).parents[1] / "src" / "doubletake" / "prompts"
+                    / {Genre.DEFINITIONAL_ONELINER: "l5_definitional.md",
+                       Genre.DECLARATIVE: "l5_declarative.md"}[genre]).read_text(encoding="utf-8")
+        assert "{sense_a" not in template and "{sense_b" not in template
+        l4 = self._definitional_l4()
+        rendered = _render_prompt(genre, self._DEF_TEXT, "autobiography", l4)
+        assert "resolves to):** auto (car) + biography" in rendered
+
+    def test_pass_anchoring_requires_resolving_sense(self) -> None:
+        with pytest.raises(ValidationError):
+            L4Result(
+                sense_a="x", sense_a_anchor_quote="x", sense_b="y", sense_b_anchor_quote="y",
+                anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
+                anchoring_status=AnchoringStatus.PASS,
+            )
+
+    def test_threshold_is_per_genre(self) -> None:
+        """0.5 passes QA (cut-off 0.46) but fails DECLARATIVE (cut-off 0.60)."""
+        qa = resolve_l5(
+            _make_record(self._QA_TEXT, Genre.QA_RIDDLE, self._qa_l4()),
+            DEFAULT_SETTINGS, ambiguous_term="guts",
+            client=_mock_client([json.dumps({k: 0.5 for k in DEFAULT_SETTINGS.L5_QA_WEIGHTS})]),
+        )
+        decl = resolve_l5(
+            _make_record(self._QA_TEXT, Genre.DECLARATIVE, self._qa_l4()),
+            DEFAULT_SETTINGS, ambiguous_term="guts",
+            client=_mock_client([json.dumps({k: 0.5 for k in _L5_DECLARATIVE_WEIGHTS})]),
+        )
+        assert qa.resolution_status == ResolutionStatus.RESOLUTION_PASS
+        assert decl.resolution_status == ResolutionStatus.RESOLUTION_FAIL
+
+    def test_declarative_score_uses_correct_weights(self) -> None:
+        l4 = L4Result(
+            sense_a="a fishing net",
+            sense_a_anchor_quote="fishermen",
+            sense_b="net as in net financial result",
+            sense_b_anchor_quote="calculating the net loss",
+            anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
+            anchoring_status=AnchoringStatus.PASS,
+            resolving_sense="sense_b",
+        )
+        record = _make_record(
+            "The fishermen are calculating the net loss.", Genre.DECLARATIVE, l4
+        )
+        payload = json.dumps({k: 1.0 for k in _L5_DECLARATIVE_WEIGHTS} | {"reasoning": "all max"})
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS,
+            ambiguous_term="net", client=_mock_client([payload]),
+        )
+        assert isinstance(result, L5DeclarativeResult)
+        assert set(result.subscores) == set(_L5_DECLARATIVE_WEIGHTS)
+        assert abs(result.resolution_score - 1.0) < 1e-4
+
 
 # ---------------------------------------------------------------------------
 # Parameterised offline test against all six fixture items
@@ -379,6 +489,18 @@ def test_fixture_item_offline(fixture: dict[str, Any]) -> None:
         assert result.resolution_status == expected
         return
 
+    # Same-span anchors with wrong relation also short-circuit (no LLM call).
+    if (l4.sense_a_anchor_quote == l4.sense_b_anchor_quote
+            and l4.anchor_relation != AnchorRelation.RESEGMENTATION):
+        result = resolve_l5(
+            record, DEFAULT_SETTINGS, ambiguous_term=fixture["ambiguous_term"]
+        )
+        assert result.resolution_status == ResolutionStatus.INSUFFICIENT_CONTEXT, (
+            f"Fixture {fixture['id']}: expected INSUFFICIENT_CONTEXT from "
+            "same-span short-circuit"
+        )
+        return
+
     if expected == ResolutionStatus.RESOLUTION_PASS:
         score_val = 0.9
     else:
@@ -388,6 +510,8 @@ def test_fixture_item_offline(fixture: dict[str, Any]) -> None:
         keys = list(DEFAULT_SETTINGS.L5_QA_WEIGHTS.keys())
     elif genre == Genre.DEFINITIONAL_ONELINER:
         keys = list(_L5_DEFINITIONAL_WEIGHTS.keys())
+    elif genre == Genre.DECLARATIVE:
+        keys = list(_L5_DECLARATIVE_WEIGHTS.keys())
     else:
         keys = list(_L5_DIALOGUE_WEIGHTS.keys())
 
@@ -413,9 +537,10 @@ def _qa_record_for_routing() -> AnalysisRecord:
         sense_a="courage",
         sense_a_anchor_quote="no guts",
         sense_b="internal organs",
-        sense_b_anchor_quote="no guts",
+        sense_b_anchor_quote="skeletons",
         anchor_relation=AnchorRelation.SEPARATE_CONTEXTS,
         anchoring_status=AnchoringStatus.PASS,
+        resolving_sense="sense_a",
     )
     return record
 
@@ -593,3 +718,38 @@ def test_fixture_item_live(fixture: dict[str, Any]) -> None:
         assert isinstance(result.resolution_score, float)
         assert 0.0 <= result.resolution_score <= 1.0
     assert isinstance(result.subscores, dict)
+
+
+# ---------------------------------------------------------------------------
+# Fixture structural validation — offline, no LLM, must pass before any live run
+# ---------------------------------------------------------------------------
+
+def test_fixture_anchor_quotes_are_substrings_and_distinct() -> None:
+    """For every PASS-status fixture:
+    - both anchor quotes must be substrings of the item text (case-insensitive
+      to handle sentence-start capitalisation differences)
+    - identical anchor quotes iff anchor_relation == 'resegmentation'
+
+    Failing this test in CI is correct and expected for any unfixed fixture.
+    It replaces the previous failure mode of silently burning API quota.
+    """
+    failures: list[str] = []
+    for item in _load_fixtures():
+        l4 = item["l4_result"]
+        if l4["anchoring_status"] != "PASS":
+            continue
+        text_lower = item["text"].lower()
+        item_id = item["id"]
+        a = l4["sense_a_anchor_quote"]
+        b = l4["sense_b_anchor_quote"]
+        if a.lower() not in text_lower:
+            failures.append(f"{item_id}: sense_a_anchor_quote {a!r} not in text")
+        if b.lower() not in text_lower:
+            failures.append(f"{item_id}: sense_b_anchor_quote {b!r} not in text")
+        is_reseg = l4.get("anchor_relation") == "resegmentation"
+        if (a == b) != is_reseg:
+            failures.append(
+                f"{item_id}: identical={a == b} but resegmentation={is_reseg}"
+                f" — identical spans require anchor_relation='resegmentation'"
+            )
+    assert not failures, "Fixture anchor-quote violations:\n" + "\n".join(failures)
